@@ -523,7 +523,10 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 
 	while (true) {
 		auto job(_gpuWorkQueue.pop_front());
-		if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) continue;
+		if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) {
+			_testDoneQueue.push_back(job.workDataIndex);
+			continue;
+		}
 
 		auto startTime(std::chrono::high_resolution_clock::now());
 
