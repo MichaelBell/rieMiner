@@ -458,9 +458,8 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 
 	while (true) {
 		auto job(_gpuWorkQueue.pop_front());
-		//if (job.testWork.n_indexes != GPU_WORK_INDEXES) {
-		//    std:: cout << "GPU block " << job.testWork.n_indexes << " items" << std::endl;
-		//}
+		if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) continue;
+
 		auto startTime(std::chrono::high_resolution_clock::now());
 
 		mpz_mul_ui(z_ploop, _primorial, job.testWork.loop*_parameters.sieveSize);
@@ -838,7 +837,7 @@ void Miner::_processOneBlock(uint32_t workDataIndex, uint8_t* sieve) {
 		gw.testWork.n_indexes = 0;
 		gw.testWork.loop = loop;
 		gw.workDataIndex = workDataIndex;
-		int useGPU = std::max(std::min(maxGPUWork, 32 - _gpuWorkQueue.size()), 0);
+		int useGPU = std::max(std::min(maxGPUWork, 64 - _gpuWorkQueue.size()), 0);
 
 		bool reset(false);
 		uint64_t *sieve64 = (uint64_t*) sieve;

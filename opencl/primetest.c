@@ -1,9 +1,8 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <limits.h>
+#include <stdint.h>
 
 #ifndef max
 #define max(a,b)            (((a) > (b)) ? (a) : (b))
