@@ -498,7 +498,8 @@ void Miner::finishGpuTests(GpuTestContext* cxt) {
 		_manager->submitWork(_workData[cxt->workDataIndex].verifyBlock, (uint32_t*) nOffset, tupleSize);
 	}
 
-	_testDoneQueue.push_back(cxt->workDataIndex);
+	if (cxt->workDataIndex != 0xffff)
+		_testDoneQueue.push_back(cxt->workDataIndex);
 }
 
 void Miner::_gpuThread() {
@@ -509,6 +510,7 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 	GpuTestContext testContext;
 	testContext.pMiner = this;
 	testContext.n_indexes = 0;
+	testContext.workDataIndex = 0xffff;
 
 	mpz_init(testContext.z_ft_r);
 	mpz_init_set_ui(testContext.z_ft_b, 2);
@@ -540,7 +542,7 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 		assert(testDone);
 
 		testContext.n_indexes = 0;
-        testContext.workDataIndex = job.workDataIndex;
+		testContext.workDataIndex = job.workDataIndex;
 		mpz_set(testContext.z_ploop, z_ploop);
 		for (uint32_t i(0); i < listSize; i++) {
 #if 0
