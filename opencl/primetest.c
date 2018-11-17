@@ -251,7 +251,7 @@ void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl
 		setup_fermat(N_Size, nextJobSize, M, cxt->MI, cxt->R);
 	}
 
-	cl_event complete_events[2];
+	cl_event complete_events[3];
 	int firstJob = 1;
 	while (nextJobSize > 0)
 	{
