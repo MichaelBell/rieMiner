@@ -407,7 +407,22 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 
 #define MAX_N_SIZE 64
 
-bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp)
+struct GpuTestContext
+{
+	Miner* pMiner;
+	mpz_t z_ft_r, z_ft_b, z_ft_n;
+	mpz_t z_temp, z_temp2;
+	mpz_t z_ploop;
+	uint32_t indexes[GPU_WORK_INDEXES];
+	uint32_t n_indexes;
+	uint32_t workDataIndex;
+};
+
+void workFn(void* cxt) {
+	((GpuTestContext*)cxt)->pMiner->finishGpuTests((GpuTestContext*)cxt);
+}
+
+bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp, GpuTestContext* testContext)
 {
 	uint32_t M[GPU_WORK_INDEXES * MAX_N_SIZE];
 	uint32_t bits = 0;
@@ -435,24 +450,74 @@ bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU
 		mp += N_Size;
 	}
 
-	primeTest(gpuContext, N_Size, listSize, M, isPrime);
+	primeTest(gpuContext, N_Size, listSize, M, isPrime, &workFn, testContext);
 	return true;
+}
+
+void Miner::finishGpuTests(GpuTestContext* cxt) {
+	//std::cout << "Finish " << cxt->n_indexes << " tests" << std::endl;
+	for (uint32_t idx(0) ; idx < cxt->n_indexes ; idx++) {
+		if (_currentHeight != _workData[cxt->workDataIndex].verifyBlock.height) break;
+
+		uint8_t tupleSize(0);
+		mpz_mul_ui(cxt->z_temp, _primorial, cxt->indexes[idx]);
+		mpz_add(cxt->z_temp, cxt->z_temp, cxt->z_ploop);
+
+		mpz_sub(cxt->z_temp2, cxt->z_temp, _workData[cxt->workDataIndex].z_verifyTarget); // offset = tested - target
+
+		tupleSize++;
+		_manager->incTupleCount(tupleSize);
+
+		// Note start at 1 - we've already tested bias 0
+		for (std::vector<uint64_t>::size_type i(1) ; i < _parameters.primeTupleOffset.size() ; i++) {
+			mpz_add_ui(cxt->z_temp, cxt->z_temp, _parameters.primeTupleOffset[i]);
+			mpz_sub_ui(cxt->z_ft_n, cxt->z_temp, 1);
+			mpz_powm(cxt->z_ft_r, cxt->z_ft_b, cxt->z_ft_n, cxt->z_temp);
+			if (mpz_cmp_ui(cxt->z_ft_r, 1) == 0) {
+				tupleSize++;
+				_manager->incTupleCount(tupleSize);
+			}
+			else if (!_parameters.solo) {
+				int candidatesRemaining(5 - i);
+				if ((tupleSize + candidatesRemaining) < 4) continue;
+			}
+			else break;
+		}
+
+		if (_parameters.solo) {
+			if (tupleSize < _parameters.tuples) continue;
+		}
+		else if (tupleSize < 4) continue;
+
+		// Generate nOffset and submit
+		uint8_t nOffset[32];
+		memset(nOffset, 0x00, 32);
+		for(uint32_t d(0) ; d < (uint32_t) std::min(32/8, cxt->z_temp2->_mp_size) ; d++)
+			*(uint64_t*) (nOffset + d*8) = cxt->z_temp2->_mp_d[d];
+
+		_manager->submitWork(_workData[cxt->workDataIndex].verifyBlock, (uint32_t*) nOffset, tupleSize);
+	}
+
+	_testDoneQueue.push_back(cxt->workDataIndex);
 }
 
 void Miner::_gpuThread() {
 /* Check for a prime cluster. Uses the fermat test - jh's code noted that it is
 slightly faster. Could do an MR test as a follow-up, but the server can do this
 too for the one-in-a-whatever case that Fermat is wrong. */
-	mpz_t z_ft_r, z_ft_b, z_ft_n;
-	mpz_t z_temp, z_temp2;
-	mpz_t z_ploop;
+	mpz_t z_ploop, z_temp;
+	GpuTestContext testContext;
+	testContext.pMiner = this;
+	testContext.n_indexes = 0;
 
-	mpz_init(z_ft_r);
-	mpz_init_set_ui(z_ft_b, 2);
-	mpz_init(z_ft_n);
-	mpz_init(z_temp);
-	mpz_init(z_temp2);
+	mpz_init(testContext.z_ft_r);
+	mpz_init_set_ui(testContext.z_ft_b, 2);
+	mpz_init(testContext.z_ft_n);
+	mpz_init(testContext.z_temp);
+	mpz_init(testContext.z_temp2);
+	mpz_init(testContext.z_ploop);
 	mpz_init(z_ploop);
+	mpz_init(z_temp);
 
 	struct PrimeTestCxt* gpuContext = primeTestInit();
 
@@ -468,79 +533,29 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 
 		uint32_t isPrime[GPU_WORK_INDEXES];
 		uint32_t listSize = job.testWork.n_indexes;
-		bool firstTestDone = _testPrimesGpu(gpuContext, job.testWork.indexes, isPrime, listSize, z_ploop, z_temp);
+		bool testDone = _testPrimesGpu(gpuContext, job.testWork.indexes, isPrime, listSize, z_ploop, z_temp, &testContext);
+		assert(testDone);
 
-		if (firstTestDone) {
-			job.testWork.n_indexes = 0;
-			for (uint32_t i(0); i < listSize; i++) {
+		testContext.n_indexes = 0;
+        testContext.workDataIndex = job.workDataIndex;
+		mpz_set(testContext.z_ploop, z_ploop);
+		for (uint32_t i(0); i < listSize; i++) {
 #if 0
-				mpz_mul_ui(z_temp, _primorial, job.testWork.indexes[i]);
-				mpz_add(z_temp, z_temp, z_ploop);
+			mpz_mul_ui(testContext.z_temp, _primorial, job.testWork.indexes[i]);
+			mpz_add(testContext.z_temp, testContext.z_temp, testContext.z_ploop);
 
-				mpz_sub_ui(z_ft_n, z_temp, 1);
-				mpz_powm(z_ft_r, z_ft_b, z_ft_n, z_temp);
+			mpz_sub_ui(testContext.z_ft_n, testContext.z_temp, 1);
+			mpz_powm(testContext.z_ft_r, testContext.z_ft_b, testContext.z_ft_n, testContext.z_temp);
 
-				if (mpz_cmp_ui(z_ft_r, 1) == 0) assert(isPrime[i]);
-				else assert(!isPrime[i]);
+			if (mpz_cmp_ui(testContext.z_ft_r, 1) == 0) assert(isPrime[i]);
+			else assert(!isPrime[i]);
 #endif
 
-				if (isPrime[i]) {
-						job.testWork.indexes[job.testWork.n_indexes++] = job.testWork.indexes[i];
-				}
+			if (isPrime[i]) {
+					testContext.indexes[testContext.n_indexes++] = job.testWork.indexes[i];
 			}
 		}
 
-		for (uint32_t idx(0) ; idx < job.testWork.n_indexes ; idx++) {
-			if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) break;
-
-			uint8_t tupleSize(0);
-			mpz_mul_ui(z_temp, _primorial, job.testWork.indexes[idx]);
-			mpz_add(z_temp, z_temp, z_ploop);
-
-			if (!firstTestDone)
-			{
-				mpz_sub_ui(z_ft_n, z_temp, 1);
-				mpz_powm(z_ft_r, z_ft_b, z_ft_n, z_temp);
-
-				if (mpz_cmp_ui(z_ft_r, 1) != 0) continue;
-			}
-
-			mpz_sub(z_temp2, z_temp, _workData[job.workDataIndex].z_verifyTarget); // offset = tested - target
-
-			tupleSize++;
-			_manager->incTupleCount(tupleSize);
-
-			// Note start at 1 - we've already tested bias 0
-			for (std::vector<uint64_t>::size_type i(1) ; i < _parameters.primeTupleOffset.size() ; i++) {
-				mpz_add_ui(z_temp, z_temp, _parameters.primeTupleOffset[i]);
-				mpz_sub_ui(z_ft_n, z_temp, 1);
-				mpz_powm(z_ft_r, z_ft_b, z_ft_n, z_temp);
-				if (mpz_cmp_ui(z_ft_r, 1) == 0) {
-					tupleSize++;
-					_manager->incTupleCount(tupleSize);
-				}
-				else if (!_parameters.solo) {
-					int candidatesRemaining(5 - i);
-					if ((tupleSize + candidatesRemaining) < 4) continue;
-				}
-				else break;
-			}
-
-			if (_parameters.solo) {
-				if (tupleSize < _parameters.tuples) continue;
-			}
-			else if (tupleSize < 4) continue;
-
-			// Generate nOffset and submit
-			uint8_t nOffset[32];
-			memset(nOffset, 0x00, 32);
-			for(uint32_t d(0) ; d < (uint32_t) std::min(32/8, z_temp2->_mp_size) ; d++)
-				*(uint64_t*) (nOffset + d*8) = z_temp2->_mp_d[d];
-
-			_manager->submitWork(_workData[job.workDataIndex].verifyBlock, (uint32_t*) nOffset, tupleSize);
-		}
-
-		_testDoneQueue.push_back(job.workDataIndex);
 		_verifyTime += std::chrono::duration_cast<decltype(_verifyTime)>(std::chrono::high_resolution_clock::now() - startTime);
 	}
 }

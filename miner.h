@@ -154,7 +154,7 @@ class Miner {
 	void _processSieve(uint8_t *sieve, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint64_t start_i, uint64_t end_i);
 	void _verifyThread();
-	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp);
+	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp, struct GpuTestContext* testContext);
 	void _gpuThread();
 	void _getTargetFromBlock(mpz_t z_target, const WorkData& block);
 	void _processOneBlock(uint32_t workDataIndex, uint8_t* sieve);
@@ -182,6 +182,8 @@ class Miner {
 	void process(WorkData block);
 	bool inited() {return _inited;}
 	void updateHeight(uint32_t height) {_currentHeight = height;}
+
+	void finishGpuTests(struct GpuTestContext* cxt);
 };
 
 #endif

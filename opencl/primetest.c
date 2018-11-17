@@ -82,7 +82,7 @@ static void setup_fermat(int N_Size, int num, const mp_limb_t* M, mp_limb_t* MI,
 			mp = mshifted;
 		}
 
-		for (size_t i = 0; i < mn; ++i) rp[i] = 0;
+		for (mp_size_t i = 0; i < mn; ++i) rp[i] = 0;
 		rp[mn] = 1 << minv.shift;
 		mpn_div_r_preinv_ns(rp, mn + 1, mp, mn, &minv);
 
@@ -166,7 +166,7 @@ PrimeTestCxt* primeTestInit()
 	cxt->command_queue = clCreateCommandQueue(cxt->context, cxt->device_id, 0, &ret);
 	DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
-	// Create memory buffers on the device for each vector 
+	// Create memory buffers on the device for each vector
 	cxt->m_mem_obj = clCreateBuffer(cxt->context, CL_MEM_READ_ONLY,
 									  MAX_JOB_SIZE * MAX_N_SIZE * sizeof(cl_uint), NULL, &ret);
 	cxt->mi_mem_obj = clCreateBuffer(cxt->context, CL_MEM_READ_ONLY,
@@ -237,7 +237,7 @@ static void primeTestBuild(PrimeTestCxt* cxt, int N_Size)
 	cxt->N_Size = N_Size;
 }
 
-void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl_uint* is_prime)
+void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl_uint* is_prime, void (*workFn)(void*), void* workCxt)
 {
 	if (N_Size != cxt->N_Size)
 	{
@@ -269,7 +269,7 @@ void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl
 		DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
 		ret = clEnqueueWriteBuffer(cxt->command_queue, cxt->m_mem_obj, CL_NON_BLOCKING, 0,
-										  jobSize * N_Size * sizeof(cl_uint), M, 0, NULL, NULL);
+                                   jobSize * N_Size * sizeof(cl_uint), M, 0, NULL, NULL);
 		DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
 		if (!firstJob) clWaitForEvents(1, &complete_events[2]);
@@ -281,6 +281,12 @@ void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl
 		ret = clEnqueueNDRangeKernel(cxt->command_queue, cxt->kernel, 1, NULL,
 									 &global_item_size, NULL, 0, NULL, NULL);
 		DPRINTF("ret at %d is %d\n", __LINE__, ret);
+
+		if (workFn)
+		{
+			workFn(workCxt);
+			workFn = NULL;
+		}
 
 		if (nextJobSize > 0)
 		{
@@ -294,9 +300,11 @@ void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl
 								  jobSize * sizeof(cl_uint), is_prime, 0, NULL, &complete_events[2]);
 		DPRINTF("ret at %d is %d\n", __LINE__, ret);
 		DPRINTF("after copying\n");
+		ret = ret; // Suppress warning when debug off.
 
 		is_prime += jobSize;
 	}
+
 	clWaitForEvents(1, &complete_events[2]);
 
 	//clFinish(cxt->command_queue);
