@@ -526,6 +526,10 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 	while (true) {
 		auto job(_gpuWorkQueue.pop_front());
 		if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) {
+			if (testContext.workDataIndex != 0xffff)
+				_testDoneQueue.push_back(testContext.workDataIndex);
+			testContext.n_indexes = 0;
+			testContext.workDataIndex = 0xffff;
 			_testDoneQueue.push_back(job.workDataIndex);
 			continue;
 		}
