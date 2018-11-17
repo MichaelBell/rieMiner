@@ -22,6 +22,7 @@ union xmmreg_t {
 
 #define WORK_DATAS 2
 #define WORK_INDEXES 64
+#define GPU_WORK_INDEXES 1024
 enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE};
 
 struct MinerParameters {
@@ -33,7 +34,7 @@ struct MinerParameters {
 	int sieveWorkers;
 	uint64_t sieveBits, sieveSize, sieveWords, maxIncrements, maxIter, primorialOffset, denseLimit;
 	std::vector<uint64_t> primes, inverts, modPrecompute, primeTupleOffset;
-	
+
 	MinerParameters() {
 		primorialNumber = 40;
 		threads         = 8;
@@ -73,6 +74,15 @@ struct primeTestWork {
 	};
 };
 
+struct gpuTestWork {
+	uint32_t workDataIndex;
+	struct {
+		uint64_t loop;
+		uint32_t n_indexes;
+		uint32_t indexes[GPU_WORK_INDEXES];
+	} testWork;
+};
+
 struct MinerWorkData {
 	mpz_t z_verifyTarget, z_verifyRemainderPrimorial;
 	WorkData verifyBlock;
@@ -84,8 +94,9 @@ class Miner {
 	bool _inited;
 	volatile uint32_t _currentHeight;
 	MinerParameters _parameters;
-	
+
 	ts_queue<primeTestWork, 4096> _verifyWorkQueue;
+	ts_queue<gpuTestWork, 1024> _gpuWorkQueue;
 	ts_queue<uint64_t, 1024> _modDoneQueue;
 	ts_queue<uint32_t, 128> _sieveDoneQueue;
 	ts_queue<uint32_t, 4096> _testDoneQueue;
@@ -97,8 +108,9 @@ class Miner {
 	std::vector<uint64_t> _halfPrimeTupleOffset;
 
 	std::chrono::microseconds _modTime, _sieveTime, _verifyTime;
-	
+
 	bool _masterExists;
+	bool _gpuExists;
 	std::mutex _masterLock, _bucketLock;
 
 	uint64_t _curWorkDataIndex;
@@ -136,15 +148,17 @@ class Miner {
 			}
 		}
 	}
-	
+
 	void _putOffsetsInSegments(uint64_t *offsets, int n_offsets);
 	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i);
 	void _processSieve(uint8_t *sieve, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint64_t start_i, uint64_t end_i);
 	void _verifyThread();
+	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp);
+	void _gpuThread();
 	void _getTargetFromBlock(mpz_t z_target, const WorkData& block);
 	void _processOneBlock(uint32_t workDataIndex, uint8_t* sieve);
-	
+
 	public:
 	Miner(const std::shared_ptr<WorkManager> &manager) {
 		_manager = manager;
@@ -161,8 +175,9 @@ class Miner {
 		_nDense  = 0;
 		_nSparse = 0;
 		_masterExists = false;
+		_gpuExists = false;
 	}
-	
+
 	void init();
 	void process(WorkData block);
 	bool inited() {return _inited;}
