@@ -20,7 +20,7 @@ extern "C" {
 
 void Miner::init() {
 	_parameters.threads = _manager->options().threads();
-	_parameters.sieveWorkers = std::max(1, _manager->options().threads()/4);
+	_parameters.sieveWorkers = std::max(1, _manager->options().threads()/2);
 	_parameters.sieveWorkers = std::min(_parameters.sieveWorkers, 8);
 	_parameters.solo = !(_manager->options().protocol() == "Stratum");
 	_parameters.tuples = _manager->options().tuples();
@@ -861,7 +861,7 @@ void Miner::_processOneBlock(uint32_t workDataIndex, uint8_t* sieve) {
 		gw.testWork.n_indexes = 0;
 		gw.testWork.loop = loop;
 		gw.workDataIndex = workDataIndex;
-		int useGPU = std::max(std::min(maxGPUWork, 64 - _gpuWorkQueue.size()), 0);
+		int useGPU = std::max(std::min(maxGPUWork, 32 - _gpuWorkQueue.size()), 0);
 
 		bool reset(false);
 		uint64_t *sieve64 = (uint64_t*) sieve;
