@@ -231,7 +231,7 @@ __kernel void fermat_test(__global const uint *M_in, __global const uint *Mi_in,
 		R[i] = R_in[offset + i];
 	}
 
-	const uint shift = clz(M[N_Size - 1]);
+	//const uint shift = clz(M[N_Size - 1]);
 	const uint highbit = ((uint)1) << 31;
 	uint startbit = highbit >> shift;
 

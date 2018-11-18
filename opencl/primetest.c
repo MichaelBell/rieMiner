@@ -119,6 +119,7 @@ typedef struct PrimeTestCxt
 	cl_kernel kernel;
 
 	int N_Size;
+	int shift;
 	cl_uint *R;
 	cl_uint *MI;
 } PrimeTestCxt;
@@ -188,7 +189,7 @@ PrimeTestCxt* primeTestInit()
 	return cxt;
 }
 
-static void primeTestBuild(PrimeTestCxt* cxt, int N_Size)
+static void primeTestBuild(PrimeTestCxt* cxt, int N_Size, int shift)
 {
 	if (cxt->N_Size != 0)
 	{
@@ -202,7 +203,7 @@ static void primeTestBuild(PrimeTestCxt* cxt, int N_Size)
 
 	// Build the program
 	char options[1024];
-	sprintf(options, "-DN_Size=%d", N_Size);
+	sprintf(options, "-DN_Size=%d -Dshift=%d", N_Size, shift);
 	cl_int ret = clBuildProgram(cxt->program, 1, &cxt->device_id, options, NULL, NULL);
 
 	if (ret != CL_SUCCESS)
@@ -235,13 +236,16 @@ static void primeTestBuild(PrimeTestCxt* cxt, int N_Size)
 	DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
 	cxt->N_Size = N_Size;
+	cxt->shift = shift;
 }
 
 void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl_uint* is_prime, void (*workFn)(void*), void* workCxt)
 {
-	if (N_Size != cxt->N_Size)
+	int shift;
+	gmp_clz(shift, M[N_Size-1]);  // We assume the caller checks all shifts are equal.
+	if (N_Size != cxt->N_Size || shift != cxt->shift)
 	{
-		primeTestBuild(cxt, N_Size);
+		primeTestBuild(cxt, N_Size, shift);
 	}
 
 	int nextJobSize = min(MAX_JOB_SIZE, listSize);
@@ -269,7 +273,7 @@ void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const cl_uint* M, cl
 		DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
 		ret = clEnqueueWriteBuffer(cxt->command_queue, cxt->m_mem_obj, CL_NON_BLOCKING, 0,
-                                   jobSize * N_Size * sizeof(cl_uint), M, 0, NULL, NULL);
+								   jobSize * N_Size * sizeof(cl_uint), M, 0, NULL, NULL);
 		DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
 		if (!firstJob) clWaitForEvents(1, &complete_events[2]);
