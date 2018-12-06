@@ -54,7 +54,7 @@ class Options {
 		_testDiff  = 1600;
 		_testTime  = 0;
 		_test2t    = 50000;
-		_pn        = 40; // Primorial Number
+		_pn        = 38; // Primorial Number
 		_pOff      = {4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull, 
 		              7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull,
 		              8145217177ull, 8145220537ull, 8145223897ull, 8145227257ull}; // Primorial Offsets

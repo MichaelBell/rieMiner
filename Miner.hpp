@@ -26,7 +26,7 @@ enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_DUMMY};
 struct MinerParameters {
 	int16_t threads;
 	uint8_t tuples;
-	uint64_t primorialNumber, sieve;
+	uint64_t primorialNumber, sieve, deepSieve;
 	bool solo;
 	int sieveWorkers;
 	uint64_t sieveBits, sieveSize, sieveWords, maxIncrements, maxIter, denseLimit;
@@ -37,12 +37,13 @@ struct MinerParameters {
 		threads          = 8;
 		tuples           = 6;
 		sieve            = 2147483648;
+		deepSieve        = (1ULL << 32);
 		sieveWorkers     = 2;
 		solo             = true;
 		sieveBits        = 25;
 		sieveSize        = 1UL << sieveBits;
 		sieveWords       = sieveSize/64;
-		maxIncrements    = (1ULL << 29),
+		maxIncrements    = (1ULL << 32), // can be up to 43
 		maxIter          = maxIncrements/sieveSize;
 		primorialOffsets = {4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull, 7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull};
 		primeTupleOffset = {0, 4, 2, 4, 2, 4};
@@ -82,6 +83,9 @@ struct SieveInstance {
 	uint32_t **segmentHits = NULL;
 	std::atomic<uint64_t> *segmentCounts = NULL;
 	uint32_t *offsets = NULL;
+
+	uint8_t *deepSieve = NULL;
+	uint32_t *deepSieveOffsets = NULL;
 };
 
 class Miner {
@@ -143,6 +147,7 @@ class Miner {
 	
 	void _putOffsetsInSegments(SieveInstance& sieve, uint64_t *offsets, uint64_t* counts, int n_offsets);
 	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i);
+	void _deepSieve(SieveInstance& sieve, uint32_t workDataIndex);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex);

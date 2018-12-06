@@ -130,7 +130,7 @@ void Miner::init() {
 	_sparseLimit = 0;
 	for (uint64_t i(5) ; i < _nPrimes ; i++) {
 		const uint64_t p(_parameters.primes[i]);
-		if (p < _parameters.maxIncrements) _primeTestStoreOffsetsSize++;
+		if (p < _parameters.maxIncrements && p < 0x40000000) _primeTestStoreOffsetsSize++;
 		else {
 			if (_sparseLimit == 0) _sparseLimit = i & (~1ull);
 			highFloats += ((tupleSizeAsDouble*_parameters.maxIncrements)/(double) p);
@@ -147,6 +147,7 @@ void Miner::init() {
 		_entriesPerSegment = highSegmentEntries/_parameters.maxIter + 4; // Rounding up a bit
 		_entriesPerSegment = (_entriesPerSegment + (_entriesPerSegment >> 3));
 	}
+	_entriesPerSegment *= 2;
 	
 	try {
 		_sieves = new SieveInstance[_parameters.sieveWorkers];
@@ -334,7 +335,7 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 				} \
 			} \
 			else { \
-				if (n_offsets[j] + _halfPrimeTupleOffset.size() >= OFFSET_STACK_SIZE) { \
+				if (n_offsets[j] + _halfPrimeTupleOffset.size()*4 >= OFFSET_STACK_SIZE) { \
 					if (_workData[workDataIndex].verifyBlock.height != _currentHeight) { \
 						mpz_clear(tar); \
 						return; \
@@ -342,16 +343,16 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 					_putOffsetsInSegments(_sieves[j], offsets[j], counts[j], n_offsets[j]); \
 					n_offsets[j] = 0; \
 				} \
-				if (index < _parameters.maxIncrements) { \
-					offsets[j][n_offsets[j]++] = index; \
-					counts[j][index >> _parameters.sieveBits]++; \
+				for (uint64_t q(index); q < _parameters.maxIncrements; q += p) { \
+					offsets[j][n_offsets[j]++] = q; \
+					counts[j][q >> _parameters.sieveBits]++; \
 				} \
 				for (std::vector<uint64_t>::size_type f(1) ; f < _halfPrimeTupleOffset.size() ; f++) { \
 					if (index < invert[_halfPrimeTupleOffset[f]]) index += p; \
 					index -= invert[_halfPrimeTupleOffset[f]]; \
-					if (index < _parameters.maxIncrements) { \
-						offsets[j][n_offsets[j]++] = index; \
-						counts[j][index >> _parameters.sieveBits]++; \
+					for (uint64_t q(index); q < _parameters.maxIncrements; q += p) { \
+						offsets[j][n_offsets[j]++] = q; \
+						counts[j][q >> _parameters.sieveBits]++; \
 					} \
 				} \
 			} \
@@ -401,6 +402,105 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 	}
 
 	mpz_clear(tar);
+}
+
+void Miner::_deepSieve(SieveInstance& sieve, uint32_t workDataIndex) {
+	mpz_t tar, z_p, z_tmp;
+	mpz_init(tar);
+	mpz_init(z_p);
+	mpz_init(z_tmp);
+	mpz_set(tar, _workData[workDataIndex].z_verifyTarget);
+	mpz_add(tar, tar, _workData[workDataIndex].z_verifyRemainderPrimorial);
+	
+	if (sieve.id > 0) {
+		mpz_add_ui(tar, tar, _primorialOffsetDiffToFirst[sieve.id]);
+	}
+	
+	if (!sieve.deepSieveOffsets) {
+		sieve.deepSieveOffsets = new uint32_t[_nPrimes];
+		sieve.deepSieve = new uint8_t[_parameters.sieveSize/8];
+	}
+	
+	uint64_t deepSieveLimit(ceil(sqrt(double(_parameters.deepSieve))) + 1);
+	assert(deepSieveLimit < _nPrimes);
+	assert((_parameters.sieve & 1) == 0);
+	uint64_t deepSieveLimitIdx(1);
+	for (; _parameters.primes[deepSieveLimitIdx] < deepSieveLimit; deepSieveLimitIdx++) {
+		sieve.deepSieveOffsets[deepSieveLimitIdx] = _parameters.primes[deepSieveLimitIdx] - (_parameters.sieve % _parameters.primes[deepSieveLimitIdx]);
+		//if (sieve.deepSieveOffsets[deepSieveLimitIdx] == _parameters.primes[deepSieveLimitIdx]) sieve.deepSieveOffsets[deepSieveLimitIdx] = 0;
+	}
+	
+	for (uint64_t j(_parameters.sieve); j < _parameters.deepSieve; j += _parameters.sieveSize) {
+		memset(sieve.deepSieve, 0, _parameters.sieveSize/8);
+		
+		uint32_t pending[PENDING_SIZE];
+		uint64_t pending_pos(0);
+		_initPending(pending);
+
+		for (uint64_t i(1) ; i < deepSieveLimitIdx ; i++) {
+			const uint64_t p(_parameters.primes[i]);
+			while (sieve.deepSieveOffsets[i] < _parameters.sieveSize) {
+				_addToPending(sieve.deepSieve, pending, pending_pos, uint32_t(sieve.deepSieveOffsets[i]));
+				sieve.deepSieveOffsets[i] += p;
+			}
+			sieve.deepSieveOffsets[i] -= _parameters.sieveSize;
+		}
+
+		_termPending(sieve.deepSieve, pending);
+
+		for (uint64_t i(1); i < _parameters.sieveSize && (i+j) < _parameters.deepSieve; i+=2) {
+			if ((sieve.deepSieve[i >> 3] & (1 << (i&0x7))) != 0) continue;
+			uint64_t p(j + i);
+			
+			uint64_t invert[4];
+			mpz_set_ui(z_p, _parameters.primes[i]);
+			mpz_invert(z_tmp, _primorial, z_p);
+			invert[0] = mpz_get_ui(z_tmp);
+
+			// Compute the index
+			uint64_t index;
+			{
+				const uint64_t remainder(mpz_tdiv_ui(tar, p)), pa(p - remainder);
+				uint64_t q, nh, nl;
+				umul_ppmm(nh, nl, pa, invert[0]);
+				udiv_qrnnd(q, index, nh, nl, p);
+			}
+
+			invert[1] = (invert[0] << 1);
+			if (invert[1] >= p) invert[1] -= p;
+			invert[2] = invert[1] << 1;
+			if (invert[2] >= p) invert[2] -= p;
+			invert[3] = invert[1] + invert[2];
+			if (invert[3] >= p) invert[3] -= p;
+
+			for (uint64_t q(index); q < _parameters.maxIncrements; q += p) {
+				uint64_t segment(q >> _parameters.sieveBits),
+					 sc(sieve.segmentCounts[segment]);
+				if (sc >= _entriesPerSegment) {
+					std::cerr << __func__ << ": segment " << segment << " " << sc << " count is > " << _entriesPerSegment << std::endl;
+					abort();
+				}
+				sieve.segmentHits[segment][sieve.segmentCounts[segment]++] = q & (_parameters.sieveSize - 1);
+			}
+			for (std::vector<uint64_t>::size_type f(1) ; f < _halfPrimeTupleOffset.size() ; f++) {
+				if (index < invert[_halfPrimeTupleOffset[f]]) index += p;
+				index -= invert[_halfPrimeTupleOffset[f]];
+				for (uint64_t q(index); q < _parameters.maxIncrements; q += p) {
+					uint64_t segment(q >> _parameters.sieveBits),
+						 sc(sieve.segmentCounts[segment]);
+					if (sc >= _entriesPerSegment) {
+						std::cerr << __func__ << ": segment " << segment << " " << sc << " count is > " << _entriesPerSegment << std::endl;
+						abort();
+					}
+					sieve.segmentHits[segment][sieve.segmentCounts[segment]++] = q & (_parameters.sieveSize - 1);
+				}
+			}
+		}
+	}
+	
+	mpz_clear(tar);	
+	mpz_clear(z_p);	
+	mpz_clear(z_tmp);	
 }
 
 void Miner::_processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i) {
@@ -475,6 +575,8 @@ void Miner::_processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, 
 }
 
 void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
+	_deepSieve(sieve, workDataIndex);
+	
 	std::unique_lock<std::mutex> modLock(sieve.modLock, std::defer_lock);
 	for (uint64_t loop(0) ; loop < _parameters.maxIter ; loop++) {
 		if (_workData[workDataIndex].verifyBlock.height != _currentHeight)
