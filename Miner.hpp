@@ -29,22 +29,27 @@ struct MinerParameters {
 	uint64_t primorialNumber, sieve, deepSieve;
 	bool solo;
 	int sieveWorkers;
-	uint64_t sieveBits, sieveSize, sieveWords, maxIncrements, maxIter, denseLimit;
+	uint64_t sieveBits, sieveSize, sieveWords, deepSieveBits, deepSieveSize, deepSieveWords, maxIncrements, maxIter, maxDeep, maxDeepIter, denseLimit;
 	std::vector<uint64_t> primes, inverts, modPrecompute, primeTupleOffset, primorialOffsets;
 	
 	MinerParameters() {
 		primorialNumber  = 40;
 		threads          = 8;
 		tuples           = 6;
-		sieve            = 2147483648;
+		sieve            = (1ULL << 30);  // Can't be bigger than maxIncrements.
 		deepSieve        = (1ULL << 32);
 		sieveWorkers     = 2;
 		solo             = true;
 		sieveBits        = 25;
 		sieveSize        = 1UL << sieveBits;
 		sieveWords       = sieveSize/64;
-		maxIncrements    = (1ULL << 32), // can be up to 43
+		deepSieveBits    = 30;
+		deepSieveSize    = 1UL << deepSieveBits;
+		deepSieveWords   = deepSieveSize/64;
+		maxIncrements    = (1ULL << 30);  // Limited by processSieve6 and 32-bit offsets, should be possible to raise to 2^32.
 		maxIter          = maxIncrements/sieveSize;
+		maxDeep          = (1ULL << 43);  // Limited by primorialNumber
+		maxDeepIter      = maxDeep/deepSieveSize;
 		primorialOffsets = {4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull, 7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull};
 		primeTupleOffset = {0, 4, 2, 4, 2, 4};
 	}
@@ -84,7 +89,7 @@ struct SieveInstance {
 	std::atomic<uint64_t> *segmentCounts = NULL;
 	uint32_t *offsets = NULL;
 
-	uint8_t *deepSieve = NULL;
+	uint8_t *deepPrimeSieve = NULL;
 	uint32_t *deepSieveOffsets = NULL;
 };
 
@@ -113,14 +118,14 @@ class Miner {
 	uint32_t _maxWorkOut;
 
 	void _initPending(uint32_t pending[PENDING_SIZE]) {
-		for (int i(0) ; i < PENDING_SIZE; i++) pending[i] = 0;
+		for (int i(0) ; i < PENDING_SIZE; i++) pending[i] = ~0u;
 	}
 
 	void _addToPending(uint8_t *sieve, uint32_t pending[PENDING_SIZE], uint64_t &pos, uint32_t ent) {
 		__builtin_prefetch(&(sieve[ent >> 3]));
 		const uint32_t old(pending[pos]);
-		if (old != 0) {
-			assert(old < _parameters.sieveSize);
+		if (old != ~0u) {
+			//assert(old < _parameters.sieveSize);
 			sieve[old >> 3] |= (1 << (old & 7));
 		}
 		pending[pos] = ent;
@@ -138,8 +143,8 @@ class Miner {
 	void _termPending(uint8_t *sieve, uint32_t pending[PENDING_SIZE]) {
 		for (uint64_t i(0) ; i < PENDING_SIZE ; i++) {
 			const uint32_t old(pending[i]);
-			if (old != 0) {
-				assert(old < _parameters.sieveSize);
+			if (old != ~0u) {
+				//assert(old < _parameters.sieveSize);
 				sieve[old >> 3] |= (1 << (old & 7));
 			}
 		}
@@ -147,7 +152,7 @@ class Miner {
 	
 	void _putOffsetsInSegments(SieveInstance& sieve, uint64_t *offsets, uint64_t* counts, int n_offsets);
 	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i);
-	void _deepSieve(SieveInstance& sieve, uint32_t workDataIndex);
+	void _deepSieve(SieveInstance& sieve, uint32_t workDataIndex, uint64_t loop);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex);
