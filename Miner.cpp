@@ -437,7 +437,7 @@ void Miner::_deepSieve(SieveInstance& sieve, uint32_t workDataIndex, uint64_t lo
 	uint32_t pending[PENDING_SIZE];
 	uint64_t indexOffset = loop << _parameters.deepSieveBits;
 	for (uint64_t j(_parameters.sieve); j < _parameters.deepSieve; j += _parameters.sieveSize*2) {
-		std::cout << "Deep sieve j=" << j << std::endl;
+		DBG(std::cout << "Deep sieve j=" << j << std::endl);
 		memset(sieve.deepPrimeSieve, 0, _parameters.sieveSize/8);
 
 		uint64_t pending_pos(0);
@@ -607,7 +607,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 		else
 			_processSieve(sieveSegment, sieve.offsets, start_i, _sparseLimit);
 
-		std::cout << "Processed sieve loop " << loop << std::endl;
+		DBG(std::cout << "Processed sieve loop " << loop << std::endl;);
 		if ((loop + 1) & ((1 << (_parameters.deepSieveBits - _parameters.sieveBits)) - 1))
 		{
 			sieveSegment += _parameters.sieveSize/8;
@@ -615,9 +615,9 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 		}
 		sieveSegment = sieve.sieve;
 
-		std::cout << "Start deep sieve" << std::endl;
+		DBG(std::cout << "Start deep sieve" << std::endl);
 		_deepSieve(sieve, workDataIndex, loop >> _parameters.deepSieveBits);
-		std::cout << "Read deep sieve" << std::endl;
+		DBG(std::cout << "Read deep sieve" << std::endl);
 
 #if 0
 		// Must now have all segments populated.
