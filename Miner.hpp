@@ -31,25 +31,25 @@ struct MinerParameters {
 	int sieveWorkers;
 	uint64_t sieveBits, sieveSize, sieveWords, deepSieveBits, deepSieveSize, deepSieveWords, maxIncrements, maxIter, maxDeep, maxDeepIter, denseLimit;
 	std::vector<uint64_t> primes, inverts, modPrecompute, primeTupleOffset, primorialOffsets;
-	
+
 	MinerParameters() {
-		primorialNumber  = 40;
+		primorialNumber  = 38;
 		threads          = 8;
 		tuples           = 6;
-		sieve            = (1ULL << 30);  // Can't be bigger than maxIncrements.
-		deepSieve        = (1ULL << 32);
+		sieve            = (1ULL << 26);  // This is the highest prime sieved by the small sieve.  Can't be bigger than maxIncrements.
+		deepSieve        = (1ULL << 36);  // This is the highest prime sieved by the large (deep) sieve.  Can't be bigger than the square of sieve.
 		sieveWorkers     = 2;
 		solo             = true;
-		sieveBits        = 25;
-		sieveSize        = 1UL << sieveBits;
+		sieveBits        = 25;            // This is the size (range of k values) of the small sieve in bits.  sieveWorkers*sieveBits should fit in L3 cache
+		sieveSize        = 1ULL << sieveBits;
 		sieveWords       = sieveSize/64;
-		deepSieveBits    = 30;
-		deepSieveSize    = 1UL << deepSieveBits;
+		deepSieveBits    = 34;            // This is the size (range of k values) of the deep sieve in bits.  This should be as large as possible.
+		deepSieveSize    = 1ULL << deepSieveBits;
 		deepSieveWords   = deepSieveSize/64;
-		maxIncrements    = (1ULL << 30);  // Limited by processSieve6 and 32-bit offsets, should be possible to raise to 2^32.
+		maxIncrements    = (1ULL << 30);  // Largely unused, but sieve must be <= this, and it can't be > 2^30  (Limited by processSieve6 and 32-bit offsets, should be possible to raise to 2^32).
 		maxIter          = maxIncrements/sieveSize;
-		maxDeep          = (1ULL << 43);  // Limited by primorialNumber
-		maxDeepIter      = maxDeep/deepSieveSize;
+		maxDeep          = (1ULL << 43);  // Limited by primorialNumber.  This is the max k value that will be searched.
+		maxDeepIter      = maxDeep/sieveSize;
 		primorialOffsets = {4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull, 7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull};
 		primeTupleOffset = {0, 4, 2, 4, 2, 4};
 	}
@@ -99,9 +99,9 @@ class Miner {
 	volatile uint32_t _currentHeight;
 	MinerParameters _parameters;
 	CpuID _cpuInfo;
-	
+
 	tsQueue<primeTestWork, 1024> _modWorkQueue;
-	tsQueue<primeTestWork, 4096> _verifyWorkQueue;
+	tsQueue<primeTestWork, 4096*32> _verifyWorkQueue;
 	tsQueue<int64_t, 9216> _workDoneQueue;
 	mpz_t _primorial;
 	uint64_t _nPrimes, _entriesPerSegment, _primeTestStoreOffsetsSize, _startingPrimeIndex, _sparseLimit;
@@ -109,7 +109,7 @@ class Miner {
 	SieveInstance* _sieves;
 
 	std::chrono::microseconds _modTime, _sieveTime, _verifyTime;
-	
+
 	bool _masterExists;
 	std::mutex _masterLock;
 
@@ -125,7 +125,7 @@ class Miner {
 		__builtin_prefetch(&(sieve[ent >> 3]));
 		const uint32_t old(pending[pos]);
 		if (old != ~0u) {
-			//assert(old < _parameters.sieveSize);
+			assert(old < _parameters.sieveSize);
 			sieve[old >> 3] |= (1 << (old & 7));
 		}
 		pending[pos] = ent;
@@ -144,12 +144,38 @@ class Miner {
 		for (uint64_t i(0) ; i < PENDING_SIZE ; i++) {
 			const uint32_t old(pending[i]);
 			if (old != ~0u) {
-				//assert(old < _parameters.sieveSize);
+				assert(old < _parameters.sieveSize);
 				sieve[old >> 3] |= (1 << (old & 7));
 			}
 		}
 	}
-	
+
+	void _initPending64(uint64_t pending[PENDING_SIZE]) {
+		for (int i(0) ; i < PENDING_SIZE; i++) pending[i] = ~0ull;
+	}
+
+	void _addToPending64(uint8_t *sieve, uint64_t pending[PENDING_SIZE], uint64_t &pos, uint64_t ent) {
+		__builtin_prefetch(&(sieve[ent >> 3]));
+		const uint64_t old(pending[pos]);
+		if (old != ~0ull) {
+			assert(old < _parameters.deepSieveSize);
+			sieve[old >> 3] |= (1 << (old & 7));
+		}
+		pending[pos] = ent;
+		pos++;
+		pos &= PENDING_SIZE - 1;
+	}
+
+	void _termPending64(uint8_t *sieve, uint64_t pending[PENDING_SIZE]) {
+		for (uint64_t i(0) ; i < PENDING_SIZE ; i++) {
+			const uint64_t old(pending[i]);
+			if (old != ~0ull) {
+				assert(old < _parameters.deepSieveSize);
+				sieve[old >> 3] |= (1 << (old & 7));
+			}
+		}
+	}
+
 	void _putOffsetsInSegments(SieveInstance& sieve, uint64_t *offsets, uint64_t* counts, int n_offsets);
 	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i);
 	void _deepSieve(SieveInstance& sieve, uint32_t workDataIndex, uint64_t loop);
@@ -160,7 +186,7 @@ class Miner {
 	void _verifyThread();
 	void _getTargetFromBlock(mpz_t z_target, const WorkData& block);
 	void _processOneBlock(uint32_t workDataIndex, bool isNewHeight);
-	
+
 	public:
 	Miner(const std::shared_ptr<WorkManager> &manager) {
 		_manager = manager;
@@ -175,7 +201,7 @@ class Miner {
 		_sparseLimit = 0;
 		_masterExists = false;
 	}
-	
+
 	void init();
 	void process(WorkData block);
 	bool inited() {return _inited;}
