@@ -9,6 +9,9 @@
 thread_local bool isMaster(false);
 thread_local uint64_t** offsetStack(NULL);
 thread_local uint64_t** offsetCount(NULL);
+thread_local uint8_t *deepPrimeSieve(NULL);
+thread_local uint32_t *deepSieveOffsets(NULL);
+
 
 #define MAX_SIEVE_WORKERS 16
 #define NUM_PRIMES_TO_2P32 203280222
@@ -404,7 +407,7 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 	mpz_clear(tar);
 }
 
-void Miner::_deepSieve(SieveInstance& sieve, uint32_t workDataIndex, uint64_t loop) {
+void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, uint32_t workDataIndex, uint64_t loop) {
 	mpz_t tar, z_p, z_tmp;
 	mpz_init(tar);
 	mpz_init(z_p);
@@ -412,56 +415,59 @@ void Miner::_deepSieve(SieveInstance& sieve, uint32_t workDataIndex, uint64_t lo
 	mpz_set(tar, _workData[workDataIndex].z_verifyTarget);
 	mpz_add(tar, tar, _workData[workDataIndex].z_verifyRemainderPrimorial);
 
-	DBG(std::cout << "Start deep sieve " << loop << std::endl);
+	DBG(std::cout << "Start deep sieve, loop " << loop << ", p = " << start_p << " to " << end_p << std::endl);
 
 	if (sieve.id > 0) {
 		mpz_add_ui(tar, tar, _primorialOffsetDiffToFirst[sieve.id]);
 	}
 
-	if (!sieve.deepSieveOffsets) {
-		sieve.deepSieveOffsets = new uint32_t[_nPrimes];
-		sieve.deepPrimeSieve = new uint8_t[_parameters.sieveSize/8];
+	if (!deepSieveOffsets) {
+		deepSieveOffsets = new uint32_t[_nPrimes];
+		deepPrimeSieve = new uint8_t[_parameters.sieveSize/8];
 	}
 
-	uint64_t deepSieveLimit(ceil(sqrt(double(_parameters.deepSieve))) + 1);
+	// On Windows, caching these thread_local pointers on the stack makes a noticeable perf difference.
+	uint32_t* dsOffsets = deepSieveOffsets;
+	uint8_t* dsPrimeSieve = deepPrimeSieve;
+
+	uint64_t deepSieveLimit(ceil(sqrt(double(end_p))) + 1);
 	assert(deepSieveLimit < _parameters.primes[_nPrimes-1]);
-	assert((_parameters.sieve & 1) == 0);
+	assert((start_p & 1) == 0);
+	assert(((end_p - start_p) & ((1ull << (_parameters.sieveBits + 1)) - 1)) == 0);
 	uint64_t deepSieveLimitIdx(1);
 	for (; _parameters.primes[deepSieveLimitIdx] < deepSieveLimit; deepSieveLimitIdx++) {
-		uint32_t offset = _parameters.primes[deepSieveLimitIdx] - (_parameters.sieve % _parameters.primes[deepSieveLimitIdx]);
+		uint32_t offset = _parameters.primes[deepSieveLimitIdx] - (start_p % _parameters.primes[deepSieveLimitIdx]);
 		if ((offset & 1) == 0) offset += _parameters.primes[deepSieveLimitIdx];
-		sieve.deepSieveOffsets[deepSieveLimitIdx] = offset >> 1;
-		//if (sieve.deepSieveOffsets[deepSieveLimitIdx] == _parameters.primes[deepSieveLimitIdx]) sieve.deepSieveOffsets[deepSieveLimitIdx] = 0;
+		dsOffsets[deepSieveLimitIdx] = offset >> 1;
 	}
 	assert(deepSieveLimitIdx < _nPrimes);
 
 	uint32_t pending[PENDING_SIZE];
 	uint64_t pending64[PENDING_SIZE];
 	uint64_t indexOffset = loop << _parameters.deepSieveBits;
-	for (uint64_t j(_parameters.sieve); j < _parameters.deepSieve; j += _parameters.sieveSize*2) {
-		DBG(std::cout << "Deep sieve j=" << j << std::endl);
-		memset(sieve.deepPrimeSieve, 0, _parameters.sieveSize/8);
+	for (uint64_t j(start_p); j < end_p; j += _parameters.sieveSize*2) {
+		memset(dsPrimeSieve, 0, _parameters.sieveSize/8);
 
 		uint64_t pending_pos(0);
 		_initPending(pending);
 
 		// TODO: Standard tricks like initializing mod 105.
 		for (uint64_t i(1) ; i < deepSieveLimitIdx ; i++) {
-			const uint64_t p(_parameters.primes[i]);
-			while (sieve.deepSieveOffsets[i] < _parameters.sieveSize) {
-				_addToPending(sieve.deepPrimeSieve, pending, pending_pos, uint32_t(sieve.deepSieveOffsets[i]));
-				sieve.deepSieveOffsets[i] += p;
+			const uint32_t p(_parameters.primes[i]);
+			while (dsOffsets[i] < _parameters.sieveSize) {
+				_addToPending(dsPrimeSieve, pending, pending_pos, dsOffsets[i]);
+				dsOffsets[i] += p;
 			}
-			sieve.deepSieveOffsets[i] -= _parameters.sieveSize;
+			dsOffsets[i] -= _parameters.sieveSize;
 		}
 
-		_termPending(sieve.deepPrimeSieve, pending);
+		_termPending(dsPrimeSieve, pending);
 
 		pending_pos = 0;
 		_initPending64(pending64);
 
 		for (uint64_t i(0); i < _parameters.sieveSize && (i*2+1+j) < _parameters.deepSieve; i++) {
-			if ((sieve.deepPrimeSieve[i >> 3] & (1 << (i&0x7))) != 0) continue;
+			if ((dsPrimeSieve[i >> 3] & (1 << (i&0x7))) != 0) continue;
 			uint64_t p(j + i*2 + 1);
 
 			uint64_t invert[4];
@@ -609,7 +615,9 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 		else
 			_processSieve(sieveSegment, sieve.offsets, start_i, _sparseLimit);
 
-		DBG(std::cout << "Processed sieve loop " << loop << std::endl;);
+		if ((loop & 0xff) == 0xff) {
+			DBG(std::cout << "Processed sieve loop " << loop << std::endl;);
+		}
 		if ((loop + 1) & ((1ull << (_parameters.deepSieveBits - _parameters.sieveBits)) - 1))
 		{
 			sieveSegment += _parameters.sieveSize/8;
@@ -617,7 +625,25 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 		}
 		sieveSegment = sieve.sieve;
 
-		_deepSieve(sieve, workDataIndex, loop >> (_parameters.deepSieveBits - _parameters.sieveBits));
+		primeTestWork w;
+		w.type = TYPE_SIEVE_DEEP;
+		w.workDataIndex = workDataIndex;
+		w.sieveWork.loop = loop >> (_parameters.deepSieveBits - _parameters.sieveBits);
+		w.sieveWork.sieveId = sieve.id;
+		int nDeepWorkers(0);
+		for (uint64_t p = _parameters.sieve; p < _parameters.deepSieve; p += _parameters.sieveSize << 6) {
+			w.sieveWork.start_p = p;
+			w.sieveWork.end_p = p + (_parameters.sieveSize << 6);
+			_verifyWorkQueue.push_back(w);
+			nDeepWorkers++;
+		}
+
+		while (nDeepWorkers > 0) {
+			// TODO: Use this thread to process a job, or run this on main thread when deep sieving.
+			sieve.deepDoneQueue.pop_front();
+			nDeepWorkers--;
+		}
+
 		DBG(std::cout << "Read deep sieve" << std::endl);
 
 #if 0
@@ -636,14 +662,12 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 		if (_workData[workDataIndex].verifyBlock.height != _currentHeight)
 			break;
 
-		primeTestWork w;
 		w.testWork.n_indexes = 0;
 		w.testWork.offsetId = sieve.id;
 		uint64_t deepLoop = loop & ~((1ull << (_parameters.deepSieveBits - _parameters.sieveBits)) - 1);
 		uint64_t loopPart = 0;
 		w.testWork.loop = deepLoop;
 		w.type = TYPE_CHECK;
-		w.workDataIndex = workDataIndex;
 
 		bool stop(false);
 		uint64_t *sieve64((uint64_t*) sieve.sieve);
@@ -735,6 +759,14 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 		if (job.type == TYPE_SIEVE) {
 			_runSieve(_sieves[job.sieveWork.sieveId], job.workDataIndex);
 			_workDoneQueue.push_back(-1);
+			const auto dt(std::chrono::duration_cast<decltype(_sieveTime)>(std::chrono::high_resolution_clock::now() - startTime));
+			_sieveTime += dt;
+			continue;
+		}
+
+		if (job.type == TYPE_SIEVE_DEEP) {
+			_deepSieve(_sieves[job.sieveWork.sieveId], job.sieveWork.start_p, job.sieveWork.end_p, job.workDataIndex, job.sieveWork.loop);
+			_sieves[job.sieveWork.sieveId].deepDoneQueue.push_back(1);
 			const auto dt(std::chrono::duration_cast<decltype(_sieveTime)>(std::chrono::high_resolution_clock::now() - startTime));
 			_sieveTime += dt;
 			continue;

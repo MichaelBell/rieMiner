@@ -21,7 +21,7 @@ union xmmreg_t {
 
 #define WORK_DATAS 2
 #define WORK_INDEXES 64
-enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_DUMMY};
+enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_SIEVE_DEEP, TYPE_DUMMY};
 
 struct MinerParameters {
 	int16_t threads;
@@ -71,6 +71,9 @@ struct primeTestWork {
 		} modWork;
 		struct {
 			uint32_t sieveId;
+			uint64_t start_p;
+			uint64_t end_p;
+			uint32_t loop;
 		} sieveWork;
 	};
 };
@@ -89,8 +92,7 @@ struct SieveInstance {
 	std::atomic<uint64_t> *segmentCounts = NULL;
 	uint32_t *offsets = NULL;
 
-	uint8_t *deepPrimeSieve = NULL;
-	uint32_t *deepSieveOffsets = NULL;
+	tsQueue<int, 1024> deepDoneQueue;
 };
 
 class Miner {
@@ -178,7 +180,7 @@ class Miner {
 
 	void _putOffsetsInSegments(SieveInstance& sieve, uint64_t *offsets, uint64_t* counts, int n_offsets);
 	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i);
-	void _deepSieve(SieveInstance& sieve, uint32_t workDataIndex, uint64_t loop);
+	void _deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, uint32_t workDataIndex, uint64_t loop);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex);
