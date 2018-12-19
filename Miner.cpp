@@ -429,6 +429,7 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 	// On Windows, caching these thread_local pointers on the stack makes a noticeable perf difference.
 	uint32_t* dsOffsets = deepSieveOffsets;
 	uint8_t* dsPrimeSieve = deepPrimeSieve;
+	uint64_t* sieve64 = (uint64_t*)dsPrimeSieve;
 
 	uint64_t deepSieveLimit(ceil(sqrt(double(end_p))) + 1);
 	assert(deepSieveLimit < _parameters.primes[_nPrimes-1]);
@@ -451,8 +452,29 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		uint64_t pending_pos(0);
 		_initPending(pending);
 
-		// TODO: Standard tricks like initializing mod 105.
+#if 1
+		for (uint64_t i(1) ; i < 4 ; i++) {
+			const uint32_t p(_parameters.primes[i]);
+			while (dsOffsets[i] < 105 * 64) {
+				const uint32_t ent = dsOffsets[i];
+				dsPrimeSieve[ent >> 3] |= (1 << (ent & 7));
+				dsOffsets[i] += p;
+			}
+			const uint32_t remainingIncrements = (_parameters.sieveSize - dsOffsets[i] + p - 1) / p;
+			dsOffsets[i] += remainingIncrements * p;
+			dsOffsets[i] -= _parameters.sieveSize;
+		}
+		
+		for (uint64_t i(105), k(0) ; i < _parameters.sieveSize / 64 ; i++, k++) {
+			if (k == 105) k = 0;
+			
+			sieve64[i] = sieve64[k];
+		}
+
+		for (uint64_t i(4) ; i < deepSieveLimitIdx ; i++) {
+#else
 		for (uint64_t i(1) ; i < deepSieveLimitIdx ; i++) {
+#endif
 			const uint32_t p(_parameters.primes[i]);
 			while (dsOffsets[i] < _parameters.sieveSize) {
 				_addToPending(dsPrimeSieve, pending, pending_pos, dsOffsets[i]);
@@ -466,42 +488,54 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		pending_pos = 0;
 		_initPending64(pending64);
 
+#if 1
+		for (uint64_t b(0); b < _parameters.sieveWords && (b*128+1+j) < _parameters.deepSieve; b++) {
+			uint64_t sb(~sieve64[b]);
+
+			while (sb != 0) {
+				const uint64_t lowsb(__builtin_ctzll(sb)), i(b*64 + lowsb);
+				sb &= sb - 1;
+#else
 		for (uint64_t i(0); i < _parameters.sieveSize && (i*2+1+j) < _parameters.deepSieve; i++) {
 			if ((dsPrimeSieve[i >> 3] & (1 << (i&0x7))) != 0) continue;
-			uint64_t p(j + i*2 + 1);
-
-			uint64_t invert[4];
-			mpz_set_ui(z_p, p);
-			mpz_invert(z_tmp, _primorial, z_p);
-			invert[0] = mpz_get_ui(z_tmp);
-
-			// Compute the index
-			uint64_t index;
 			{
-				const uint64_t remainder(mpz_tdiv_ui(tar, p)), pa(p - remainder);
-				uint64_t q, nh, nl;
-				umul_ppmm(nh, nl, pa, invert[0]);
-				udiv_qrnnd(q, index, nh, nl, p);
-				uint64_t indexOffsetRemainder = indexOffset % p;
-				if (index < indexOffsetRemainder) index += p;
-				index -= indexOffsetRemainder;
-			}
+#endif
 
-			invert[1] = (invert[0] << 1);
-			if (invert[1] >= p) invert[1] -= p;
-			invert[2] = invert[1] << 1;
-			if (invert[2] >= p) invert[2] -= p;
-			invert[3] = invert[1] + invert[2];
-			if (invert[3] >= p) invert[3] -= p;
+				uint64_t p(j + i*2 + 1);
 
-			for (uint64_t q(index); q < _parameters.deepSieveSize; q += p) {
-				_addToPending64(sieve.sieve, pending64, pending_pos, q);
-			}
-			for (std::vector<uint64_t>::size_type f(1) ; f < _halfPrimeTupleOffset.size() ; f++) {
-				if (index < invert[_halfPrimeTupleOffset[f]]) index += p;
-				index -= invert[_halfPrimeTupleOffset[f]];
+				uint64_t invert[4];
+				mpz_set_ui(z_p, p);
+				mpz_invert(z_tmp, _primorial, z_p);
+				invert[0] = mpz_get_ui(z_tmp);
+
+				// Compute the index
+				uint64_t index;
+				{
+					const uint64_t remainder(mpz_tdiv_ui(tar, p)), pa(p - remainder);
+					uint64_t q, nh, nl;
+					umul_ppmm(nh, nl, pa, invert[0]);
+					udiv_qrnnd(q, index, nh, nl, p);
+					uint64_t indexOffsetRemainder = indexOffset % p;
+					if (index < indexOffsetRemainder) index += p;
+					index -= indexOffsetRemainder;
+				}
+
+				invert[1] = (invert[0] << 1);
+				if (invert[1] >= p) invert[1] -= p;
+				invert[2] = invert[1] << 1;
+				if (invert[2] >= p) invert[2] -= p;
+				invert[3] = invert[1] + invert[2];
+				if (invert[3] >= p) invert[3] -= p;
+
 				for (uint64_t q(index); q < _parameters.deepSieveSize; q += p) {
 					_addToPending64(sieve.sieve, pending64, pending_pos, q);
+				}
+				for (std::vector<uint64_t>::size_type f(1) ; f < _halfPrimeTupleOffset.size() ; f++) {
+					if (index < invert[_halfPrimeTupleOffset[f]]) index += p;
+					index -= invert[_halfPrimeTupleOffset[f]];
+					for (uint64_t q(index); q < _parameters.deepSieveSize; q += p) {
+						_addToPending64(sieve.sieve, pending64, pending_pos, q);
+					}
 				}
 			}
 		}
