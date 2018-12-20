@@ -1,6 +1,7 @@
 // (c) 2017-2018 Pttn (https://github.com/Pttn/rieMiner)
 
 #include "Stats.hpp"
+#include "main.hpp"
 
 Stats::Stats(uint8_t tupleLength) {
 	_totalTuples = std::vector<std::vector<uint64_t>>();
@@ -79,7 +80,7 @@ void Stats::printStats() const {
 		printTime();
 		if (_solo) {
 			std::cout << " (1-3t/s) = (" << FIXED(1) << _tuplesSinceLastDiff[1]/elapsedSecs << " " << FIXED(2) << _tuplesSinceLastDiff[2]/elapsedSecs << " " << FIXED(3) << _tuplesSinceLastDiff[3]/elapsedSecs << ") ; ";
-			std::cout << "R=" << FIXED(1) << double(_tuplesSinceLastDiff[1])/_tuplesSinceLastDiff[2];
+			DBG(std::cout << "R=" << FIXED(1) << double(_tuplesSinceLastDiff[1])/_tuplesSinceLastDiff[2];);
 			std::cout << " (2-" << _tuples.size() - 1 << "t) = (";
 			for (uint32_t i(2) ; i < _tuples.size() ; i++) {
 				std::cout << _tuples[i];

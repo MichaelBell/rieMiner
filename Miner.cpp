@@ -452,7 +452,6 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		uint64_t pending_pos(0);
 		_initPending(pending);
 
-#if 1
 		for (uint64_t i(1) ; i < 4 ; i++) {
 			const uint32_t p(_parameters.primes[i]);
 			while (dsOffsets[i] < 105 * 64) {
@@ -472,9 +471,6 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		}
 
 		for (uint64_t i(4) ; i < deepSieveLimitIdx ; i++) {
-#else
-		for (uint64_t i(1) ; i < deepSieveLimitIdx ; i++) {
-#endif
 			const uint32_t p(_parameters.primes[i]);
 			while (dsOffsets[i] < _parameters.sieveSize) {
 				_addToPending(dsPrimeSieve, pending, pending_pos, dsOffsets[i]);
@@ -488,18 +484,12 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		pending_pos = 0;
 		_initPending64(pending64);
 
-#if 1
 		for (uint64_t b(0); b < _parameters.sieveWords && (b*128+1+j) < _parameters.deepSieve; b++) {
 			uint64_t sb(~sieve64[b]);
 
 			while (sb != 0) {
 				const uint64_t lowsb(__builtin_ctzll(sb)), i(b*64 + lowsb);
 				sb &= sb - 1;
-#else
-		for (uint64_t i(0); i < _parameters.sieveSize && (i*2+1+j) < _parameters.deepSieve; i++) {
-			if ((dsPrimeSieve[i >> 3] & (1 << (i&0x7))) != 0) continue;
-			{
-#endif
 
 				uint64_t p(j + i*2 + 1);
 
