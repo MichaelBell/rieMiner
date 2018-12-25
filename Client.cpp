@@ -131,6 +131,12 @@ void BMClient::sendWork(const std::pair<WorkData, uint8_t>& share) const {
 	for (uint8_t i(0) ; i < tmp.size() ; i++) XV8.push_back(tmp[tmp.size() - i - 1]);
 	mpz_class X(v8ToHexStr(XV8).c_str(), 16);
 	std::cout << "n = " << target + X << std::endl;
+	
+	std::ofstream resultFile;
+	resultFile.open("results.txt", std::ios::out | std::ios::app);
+	resultFile << target + X << std::endl;
+	resultFile.close();
+	
 	DBG(std::cout << "Dummy block header: " << bhStr << std::endl;);
 }
 

@@ -9,3 +9,5 @@ rieMiner.conf
 # Other
 rieMiner.exe.stackdump
 .*.swp
+
+/results.txt
