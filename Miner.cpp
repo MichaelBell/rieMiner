@@ -869,6 +869,13 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 				memset(nOffset, 0x00, 32);
 				for (uint32_t d(0) ; d < (uint32_t) std::min(32/8, z_tmp2->_mp_size) ; d++)
 					*(uint64_t*) (nOffset + d*8) = z_tmp2->_mp_d[d];
+				
+#if 1
+				DBG(gmp_printf("n = %Zx\n", z_tmp););
+				FILE* resultsFile = fopen("results.txt", "a");
+				gmp_fprintf(resultsFile, "%Zd\n", z_tmp);
+				fclose(resultsFile);
+#endif
 
 				_manager->submitWork(_workData[job.workDataIndex].verifyBlock, (uint32_t*) nOffset, tupleSize);
 			}
