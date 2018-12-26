@@ -42,7 +42,7 @@ Client.o: Client.cpp
 Stats.o: Stats.cpp
 	$(CXX) $(CFLAGS) -c -o Stats.o Stats.cpp
 
-WorkManager.o: WorkManager.cpp
+WorkManager.o: WorkManager.cpp Miner.hpp
 	$(CXX) $(CFLAGS) -c -o WorkManager.o WorkManager.cpp
 
 tools.o: tools.cpp

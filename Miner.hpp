@@ -36,7 +36,7 @@ struct MinerParameters {
 		primorialNumber  = 38;
 		threads          = 8;
 		tuples           = 6;
-		sieve            = (1ULL << 26);  // This is the highest prime sieved by the small sieve.  Can't be bigger than maxIncrements.
+		sieve            = (1ULL << 29);  // This is the highest prime sieved by the small sieve.  Can't be bigger than maxIncrements.
 		deepSieve        = (1ULL << 36);  // This is the highest prime sieved by the large (deep) sieve.  Can't be bigger than the square of sieve.
 		sieveWorkers     = 2;
 		solo             = true;
