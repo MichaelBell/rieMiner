@@ -19,15 +19,18 @@ union xmmreg_t {
 
 #define PENDING_SIZE 16
 
+#define SIEVE_SEGMENT_SPLIT_NUM 8
+
 #define WORK_DATAS 2
 #define WORK_INDEXES 64
-enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_SIEVE_DEEP, TYPE_DUMMY};
+enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_SIEVE_SEGMENT, TYPE_SIEVE_DEEP, TYPE_DUMMY};
 
 struct MinerParameters {
 	int16_t threads;
 	uint8_t tuples;
 	uint64_t primorialNumber, sieve, deepSieve;
 	bool solo;
+	bool deep;
 	int sieveWorkers;
 	uint64_t sieveBits, sieveSize, sieveWords, deepSieveBits, deepSieveSize, deepSieveWords, maxIncrements, maxIter, maxDeep, maxDeepIter, denseLimit;
 	std::vector<uint64_t> primes, inverts, modPrecompute, primeTupleOffset, primorialOffsets;
@@ -36,14 +39,15 @@ struct MinerParameters {
 		primorialNumber  = 38;
 		threads          = 8;
 		tuples           = 6;
-		sieve            = (1ULL << 29);  // This is the highest prime sieved by the small sieve.  Can't be bigger than maxIncrements.
-		deepSieve        = (1ULL << 36);  // This is the highest prime sieved by the large (deep) sieve.  Can't be bigger than the square of sieve.
+		sieve            = (1ULL << 30);  // This is the highest prime sieved by the small sieve.  Can't be bigger than maxIncrements.
+		deepSieve        = (1ULL << 37);  // This is the highest prime sieved by the large (deep) sieve.  Can't be bigger than the square of sieve.
 		sieveWorkers     = 2;
 		solo             = true;
+		deep             = true;
 		sieveBits        = 25;            // This is the size (range of k values) of the small sieve in bits.  sieveWorkers*sieveBits should fit in L3 cache
 		sieveSize        = 1ULL << sieveBits;
 		sieveWords       = sieveSize/64;
-		deepSieveBits    = 34;            // This is the size (range of k values) of the deep sieve in bits.  This should be as large as possible.
+		deepSieveBits    = 36;            // This is the size (range of k values) of the deep sieve in bits.  This should be as large as possible.
 		deepSieveSize    = 1ULL << deepSieveBits;
 		deepSieveWords   = deepSieveSize/64;
 		maxIncrements    = (1ULL << 30);  // Largely unused, but sieve must be <= this, and it can't be > 2^30  (Limited by processSieve6 and 32-bit offsets, should be possible to raise to 2^32).
@@ -75,6 +79,13 @@ struct primeTestWork {
 			uint64_t end_p;
 			uint32_t loop;
 		} sieveWork;
+		struct {
+			uint32_t sieveId;
+			uint8_t* sieveSegment;
+			uint32_t* offsets;
+			uint64_t loopStart;
+			uint64_t loopEnd;
+		} sieveSegmentWork;
 	};
 };
 
@@ -90,7 +101,7 @@ struct SieveInstance {
 	uint8_t *sieve = NULL;
 	uint32_t **segmentHits = NULL;
 	std::atomic<uint64_t> *segmentCounts = NULL;
-	uint32_t *offsets = NULL;
+	uint32_t *offsets[SIEVE_SEGMENT_SPLIT_NUM];
 
 	tsQueue<int, 1024> deepDoneQueue;
 };
@@ -183,6 +194,7 @@ class Miner {
 	void _deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, uint32_t workDataIndex, uint64_t loop);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
+	void _sieveSegments(uint8_t* sieveSegment, uint32_t* offsets, uint64_t loopStart, uint64_t loopEnd);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex);
 	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp);
 	void _verifyThread();

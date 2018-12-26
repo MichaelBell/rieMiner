@@ -170,7 +170,8 @@ void Miner::init() {
 	try {
 		DBG(std::cout << "Allocating " << 6*4*(_primeTestStoreOffsetsSize + 1024) << " bytes for the offsets..." << std::endl;);
 		for (int i(0) ; i < _parameters.sieveWorkers ; i++)
-			_sieves[i].offsets = new uint32_t[(_primeTestStoreOffsetsSize + 1024)*_parameters.primeTupleOffset.size()];
+			for (int j(0) ; j < (_parameters.deep ? SIEVE_SEGMENT_SPLIT_NUM : 1) ; j++)
+				_sieves[i].offsets[j] = new uint32_t[(_primeTestStoreOffsetsSize + 1024)*_parameters.primeTupleOffset.size()];
 	}
 	catch (std::bad_alloc& ba) {
 		std::cerr << __func__ << ": unable to allocate memory for the offsets :|..." << std::endl;
@@ -178,7 +179,8 @@ void Miner::init() {
 	}
 
 	for (int i(0) ; i < _parameters.sieveWorkers ; i++)
-		memset(_sieves[i].offsets, 0, sizeof(uint32_t)*_parameters.primeTupleOffset.size()*(_primeTestStoreOffsetsSize + 1024));
+		for (int j(0) ; j < (_parameters.deep ? SIEVE_SEGMENT_SPLIT_NUM : 1) ; j++)
+			memset(_sieves[i].offsets[j], 0, sizeof(uint32_t)*_parameters.primeTupleOffset.size()*(_primeTestStoreOffsetsSize + 1024));
 
 	try {
 		DBG(std::cout << "Allocating " << 4*_parameters.maxIter*_entriesPerSegment << " bytes for the segment hits..." << std::endl;);
@@ -329,7 +331,7 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 		// out of the function completely if the current height has changed.
 #define addToOffsets(j) { \
 			if (!onceOnly) { \
-				uint32_t* offsets = &_sieves[j].offsets[tupleSize*i]; \
+				uint32_t* offsets = &_sieves[j].offsets[0][tupleSize*i]; \
 				offsets[0] = index; \
 				for (std::vector<uint64_t>::size_type f(1) ; f < _halfPrimeTupleOffset.size() ; f++) { \
 					if (index < invert[_halfPrimeTupleOffset[f]]) index += p; \
@@ -608,16 +610,9 @@ void Miner::_processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, 
 	_termPending(sieve, pending);
 }
 
-void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
-	std::unique_lock<std::mutex> modLock(sieve.modLock, std::defer_lock);
-
-	memset(sieve.sieve, 0, _parameters.deepSieveSize/8);
-	uint8_t* sieveSegment = sieve.sieve;
-
-	for (uint64_t loop(0) ; loop < _parameters.maxDeepIter ; loop++) {
-		if (_workData[workDataIndex].verifyBlock.height != _currentHeight)
-			break;
-
+void Miner::_sieveSegments(uint8_t* sieveSegment, uint32_t* offsets, uint64_t loopStart, uint64_t loopEnd) {
+	for (uint64_t loop(loopStart) ; loop < loopEnd ; loop++) {
+		
 		// Align
 		const uint64_t tupleSize(_parameters.primeTupleOffset.size());
 		uint64_t start_i(_startingPrimeIndex);
@@ -625,63 +620,120 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 			const uint64_t pno(start_i);
 			const uint32_t p(_parameters.primes[pno]);
 			for (uint64_t f(0) ; f < tupleSize ; f++) {
-				while (sieve.offsets[pno*tupleSize + f] < _parameters.sieveSize) {
-					sieveSegment[sieve.offsets[pno*tupleSize + f] >> 3] |= (1 << ((sieve.offsets[pno*tupleSize + f] & 7)));
-					sieve.offsets[pno*tupleSize + f] += p;
+				while (offsets[pno*tupleSize + f] < _parameters.sieveSize) {
+					sieveSegment[offsets[pno*tupleSize + f] >> 3] |= (1 << ((offsets[pno*tupleSize + f] & 7)));
+					offsets[pno*tupleSize + f] += p;
 				}
-				sieve.offsets[pno*tupleSize + f] -= _parameters.sieveSize;
+				offsets[pno*tupleSize + f] -= _parameters.sieveSize;
 			}
 		}
 
 		// Main sieve
 		if (tupleSize == 6)
-			_processSieve6(sieveSegment, sieve.offsets, start_i, _sparseLimit);
+			_processSieve6(sieveSegment, offsets, start_i, _sparseLimit);
 		else
-			_processSieve(sieveSegment, sieve.offsets, start_i, _sparseLimit);
+			_processSieve(sieveSegment, offsets, start_i, _sparseLimit);
+		
+		sieveSegment += _parameters.sieveSize/8;
+	}
+}
 
-		if ((loop & 0xff) == 0xff) {
-			DBG(std::cout << "Processed sieve loop " << loop << std::endl;);
+void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
+	std::unique_lock<std::mutex> modLock(sieve.modLock, std::defer_lock);
+
+	memset(sieve.sieve, 0, _parameters.deepSieveSize/8);
+	uint8_t* sieveSegment = sieve.sieve;
+
+	primeTestWork w;
+	w.workDataIndex = workDataIndex;
+
+	for (uint64_t loop(0) ; loop < _parameters.maxDeepIter ; loop++) {
+		if (_workData[workDataIndex].verifyBlock.height != _currentHeight)
+			break;
+
+		if (_parameters.deep) {
+
+			uint64_t iterations(1ull << (_parameters.deepSieveBits - _parameters.sieveBits));
+			assert((iterations & (SIEVE_SEGMENT_SPLIT_NUM - 1)) == 0);
+			uint64_t loopIncr(iterations / SIEVE_SEGMENT_SPLIT_NUM);
+			uint64_t segmentJump(loopIncr << _parameters.sieveBits);
+			
+			const uint64_t tupleSize(_parameters.primeTupleOffset.size());
+			if (loop != 0) {
+				memcpy(sieve.offsets[0], sieve.offsets[SIEVE_SEGMENT_SPLIT_NUM - 1], sizeof(uint32_t)*tupleSize*_sparseLimit);
+			}
+			
+			for (uint64_t j(_startingPrimeIndex) ; j < _sparseLimit ; j++) {
+				const uint64_t p(_parameters.primes[j]);
+				for (uint64_t i(1) ; i < SIEVE_SEGMENT_SPLIT_NUM ; i++) {
+					for (uint64_t f(0) ; f < tupleSize; f++) {
+						if (sieve.offsets[i-1][j*tupleSize + f] >= segmentJump) {
+							sieve.offsets[i][j*tupleSize + f] = sieve.offsets[i-1][j*tupleSize + f] - segmentJump;
+						}
+						else {
+							const uint64_t increments = (segmentJump - sieve.offsets[i-1][j*tupleSize + f] + p - 1) / p;
+							uint64_t newOffset = sieve.offsets[i-1][j*tupleSize + f] + increments*p;
+							assert(newOffset >= segmentJump);
+							newOffset -= segmentJump;
+							assert(newOffset < p);
+							sieve.offsets[i][j*tupleSize + f] = newOffset;
+						}
+					}
+				}
+			}
+			
+			w.type = TYPE_SIEVE_SEGMENT;
+			w.sieveSegmentWork.sieveId = sieve.id;
+			
+			for (uint64_t i(0), innerLoop(loop) ; i < SIEVE_SEGMENT_SPLIT_NUM; i++, innerLoop += loopIncr) {
+				w.sieveSegmentWork.sieveSegment = sieveSegment;
+				sieveSegment += (_parameters.sieveSize * loopIncr) / 8;
+				w.sieveSegmentWork.offsets = sieve.offsets[i];
+				w.sieveSegmentWork.loopStart = loop;
+				w.sieveSegmentWork.loopEnd = loop + loopIncr;
+				_verifyWorkQueue.push_front(w);
+			}
+			
+			for (uint64_t i(0) ; i < SIEVE_SEGMENT_SPLIT_NUM ; i++) {
+				sieve.deepDoneQueue.pop_front();
+			}
+			
+			loop += iterations - 1;
+			
+			sieveSegment = sieve.sieve;
+
+			w.type = TYPE_SIEVE_DEEP;
+			w.sieveWork.loop = loop >> (_parameters.deepSieveBits - _parameters.sieveBits);
+			w.sieveWork.sieveId = sieve.id;
+			int nDeepWorkers(0);
+			for (uint64_t p = _parameters.sieve; p < _parameters.deepSieve; p += _parameters.sieveSize << 6) {
+				w.sieveWork.start_p = p;
+				w.sieveWork.end_p = p + (_parameters.sieveSize << 6);
+				_verifyWorkQueue.push_back(w);
+				nDeepWorkers++;
+			}
+
+			while (nDeepWorkers > 0) {
+				sieve.deepDoneQueue.pop_front();
+				nDeepWorkers--;
+			}
+
+			DBG(std::cout << "Read deep sieve" << std::endl);
 		}
-		if ((loop + 1) & ((1ull << (_parameters.deepSieveBits - _parameters.sieveBits)) - 1))
-		{
-			sieveSegment += _parameters.sieveSize/8;
-			continue;
+		else {
+			_sieveSegments(sieve.sieve, sieve.offsets[0], loop, loop + 1);
+
+			// Must now have all segments populated.
+			if (loop == 0) modLock.lock();
+
+			uint32_t pending[PENDING_SIZE];
+			_initPending(pending);
+			uint64_t pending_pos(0);
+			for (uint64_t i(0) ; i < sieve.segmentCounts[loop] ; i++)
+				_addToPending(sieve.sieve, pending, pending_pos, sieve.segmentHits[loop][i]);
+
+			_termPending(sieve.sieve, pending);
 		}
-		sieveSegment = sieve.sieve;
-
-		primeTestWork w;
-		w.type = TYPE_SIEVE_DEEP;
-		w.workDataIndex = workDataIndex;
-		w.sieveWork.loop = loop >> (_parameters.deepSieveBits - _parameters.sieveBits);
-		w.sieveWork.sieveId = sieve.id;
-		int nDeepWorkers(0);
-		for (uint64_t p = _parameters.sieve; p < _parameters.deepSieve; p += _parameters.sieveSize << 6) {
-			w.sieveWork.start_p = p;
-			w.sieveWork.end_p = p + (_parameters.sieveSize << 6);
-			_verifyWorkQueue.push_back(w);
-			nDeepWorkers++;
-		}
-
-		while (nDeepWorkers > 0) {
-			// TODO: Use this thread to process a job, or run this on main thread when deep sieving.
-			sieve.deepDoneQueue.pop_front();
-			nDeepWorkers--;
-		}
-
-		DBG(std::cout << "Read deep sieve" << std::endl);
-
-#if 0
-		// Must now have all segments populated.
-		if (loop == 0) modLock.lock();
-
-		uint32_t pending[PENDING_SIZE];
-		_initPending(pending);
-		uint64_t pending_pos(0);
-		for (uint64_t i(0) ; i < sieve.segmentCounts[loop] ; i++)
-			_addToPending(sieve.sieve, pending, pending_pos, sieve.segmentHits[loop][i]);
-
-		_termPending(sieve.sieve, pending);
-#endif
 
 		if (_workData[workDataIndex].verifyBlock.height != _currentHeight)
 			break;
@@ -796,6 +848,14 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 			continue;
 		}
 
+		if (job.type == TYPE_SIEVE_SEGMENT) {
+			_sieveSegments(job.sieveSegmentWork.sieveSegment, job.sieveSegmentWork.offsets, job.sieveSegmentWork.loopStart, job.sieveSegmentWork.loopEnd);
+			_sieves[job.sieveSegmentWork.sieveId].deepDoneQueue.push_back(1);
+			const auto dt(std::chrono::duration_cast<decltype(_sieveTime)>(std::chrono::high_resolution_clock::now() - startTime));
+			_sieveTime += dt;
+			continue;
+		}
+		
 		if (job.type == TYPE_CHECK) { // fallthrough: job.type == TYPE_CHECK
 			mpz_mul_ui(z_ploop, _primorial, job.testWork.loop*_parameters.sieveSize);
 			mpz_add(z_ploop, z_ploop, _workData[job.workDataIndex].z_verifyRemainderPrimorial);
