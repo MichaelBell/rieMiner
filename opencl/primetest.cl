@@ -1,7 +1,5 @@
 void squareSimple(uint* P, const uint* R, int SIZE)
 {
-	const uint highbit = ((uint)1) << 31;
-
 	uint T[(N_Size - 1) * 2];
 
 	{
@@ -41,13 +39,13 @@ void squareSimple(uint* P, const uint* R, int SIZE)
 	uint cy = 0;
 	for (int i = 0; i < SIZE - 1; ++i)
 	{
-		uint t = T[2 * i] & highbit;
+		uint t = T[2 * i];
 		ulong a = (ulong)P[2 * i + 1] + cy;
 		a += T[2 * i] << 1;
 		P[2 * i + 1] = (uint)a;
 		cy = (t >> 31) + (uint)(a >> 32);
 
-		t = T[2 * i + 1] & highbit;
+		t = T[2 * i + 1];
 		a = (ulong)P[2 * i + 2] + cy;
 		a += T[2 * i + 1] << 1;
 		P[2 * i + 2] = (uint)a;
