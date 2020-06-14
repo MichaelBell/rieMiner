@@ -6,7 +6,7 @@ CFLAGS = -Wall -Wextra -std=gnu++11 -O3 -march=native -fno-pie -no-pie
 
 msys_version := $(if $(findstring Msys, $(shell uname -o)),$(word 1, $(subst ., ,$(shell uname -r))),0)
 ifneq ($(msys_version), 0)
-LIBS   = -pthread -ljansson -lcurl -lcrypto -lgmpxx -lgmp -lws2_32 -Wl,--image-base -Wl,0x10000000
+LIBS   = -pthread -ljansson -lcurl -lcrypto -lgmpxx -lgmp -lws2_32 -lOpenCL -Wl,--image-base -Wl,0x10000000
 MOD_1_4_ASM = mod_1_4_win.asm
 else
 LIBS   = -pthread -ljansson -lcurl -lcrypto -Wl,-Bstatic -lgmpxx -lgmp -Wl,-Bdynamic
@@ -22,7 +22,7 @@ static: CFLAGS += -D CURL_STATICLIB -I incs/
 static: LIBS   := -static -L libs/ $(LIBS)
 static: rieMiner
 
-rieMiner: main.o Miner.o StratumClient.o GBTClient.o Client.o WorkManager.cpp Stats.cpp tools.o mod_1_4.o mod_1_2_avx.o mod_1_2_avx2.o fermat.o primetest.o primetest512.o
+rieMiner: main.o Miner.o StratumClient.o GBTClient.o Client.o WorkManager.cpp Stats.cpp tools.o mod_1_4.o mod_1_2_avx.o mod_1_2_avx2.o fermat.o primetest.o primetest512.o clprimetest.o
 	$(CXX) $(CFLAGS) -o rieMiner $^ $(LIBS)
 
 main.o: main.cpp main.hpp Miner.hpp StratumClient.hpp GBTClient.hpp Client.hpp WorkManager.hpp Stats.hpp tools.hpp tsQueue.hpp
@@ -98,6 +98,9 @@ primetest.o: ispc/primetest.s
 primetest512.o: ispc/primetest512.s
 	$(AS) ispc/primetest512.s -o primetest512.o
 endif
+
+clprimetest.o: opencl/primetest.c
+	$(CXX) $(CFLAGS) -c -o clprimetest.o opencl/primetest.c -Wno-unused-function -Wno-unused-parameter -Wno-strict-overflow
 
 clean:
 	rm -rf rieMiner *.o

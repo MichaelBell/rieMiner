@@ -6,9 +6,11 @@
 
 #include "external/gmp_util.h"
 #include "ispc/fermat.h"
+#include "opencl/primetest.h"
 #include "Miner.hpp"
 
 thread_local bool isMaster(false);
+thread_local bool isGpu(false);
 thread_local uint64_t** offsetStack(NULL);
 thread_local uint64_t** offsetCount(NULL);
 
@@ -530,6 +532,13 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 		w.testWork.loop = loop;
 		w.type = TYPE_CHECK;
 		w.workDataIndex = workDataIndex;
+
+		gpuTestWork gw;
+		gw.testWork.n_indexes = 0;
+		gw.testWork.offsetId = sieve.id;
+		gw.testWork.loop = loop;
+		gw.workDataIndex = workDataIndex;
+		int useGPU = std::max(std::min(8u, 64 - _gpuWorkQueue.size()), 0u);
 		
 		bool stop(false);
 		uint64_t *sieve64((uint64_t*) sieve.sieve);
@@ -540,24 +549,60 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 				const uint32_t lowsb(__builtin_ctzll(sb)), i((b*64) + lowsb);
 				sb &= sb - 1;
 
-				w.testWork.indexes[w.testWork.n_indexes] = i;
+				if (useGPU)
+				{
+					gw.testWork.indexes[gw.testWork.n_indexes] = i;
+					gw.testWork.n_indexes++;
+
+					if (gw.testWork.n_indexes == GPU_WORK_INDEXES) {
+						// Low overhead but still often enough
+						if (_workData[workDataIndex].verifyBlock.height != _currentHeight) {
+							stop = true;
+							break;
+						}
+
+						_gpuWorkQueue.push_back(gw);
+						gw.testWork.n_indexes = 0;
+						_workData[workDataIndex].outstandingTests++;
+						useGPU--;
+					}
+				}
+				else
+				{
+					w.testWork.indexes[w.testWork.n_indexes] = i;
+					w.testWork.n_indexes++;
+
+					if (w.testWork.n_indexes == WORK_INDEXES) {
+						// Low overhead but still often enough
+						if (_workData[workDataIndex].verifyBlock.height != _currentHeight) {
+							stop = true;
+							break;
+						}
+
+						_verifyWorkQueue.push_back(w);
+						w.testWork.n_indexes = 0;
+						_workData[workDataIndex].outstandingTests++;
+					}
+				}
+			}
+		}
+
+		if (_workData[workDataIndex].verifyBlock.height != _currentHeight) break;
+
+		if (gw.testWork.n_indexes > 0) {
+			// GPU can only process full size blocks, split this into CPU jobs
+			for (uint32_t i(0); i < gw.testWork.n_indexes; ++i)
+			{
+				w.testWork.indexes[w.testWork.n_indexes] = gw.testWork.indexes[i];
 				w.testWork.n_indexes++;
 
 				if (w.testWork.n_indexes == WORK_INDEXES) {
-					// Low overhead but still often enough
-					if (_workData[workDataIndex].verifyBlock.height != _currentHeight) {
-						stop = true;
-						break;
-					}
-
 					_verifyWorkQueue.push_back(w);
 					w.testWork.n_indexes = 0;
 					_workData[workDataIndex].outstandingTests++;
 				}
 			}
 		}
-
-		if (_workData[workDataIndex].verifyBlock.height != _currentHeight) break;
 
 		if (w.testWork.n_indexes > 0) {
 			_verifyWorkQueue.push_back(w);
@@ -717,6 +762,184 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 	}
 }
 
+struct GpuTestContext
+{
+	Miner* pMiner;
+	mpz_t z_ft_r, z_ft_b, z_ft_n;
+	mpz_t z_temp, z_temp2;
+	mpz_t z_ploop;
+	uint32_t indexes[GPU_WORK_INDEXES];
+	uint32_t n_indexes;
+	uint32_t workDataIndex;
+};
+
+void workFn(void* cxt) {
+	((GpuTestContext*)cxt)->pMiner->finishGpuTests((GpuTestContext*)cxt);
+}
+
+bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp, GpuTestContext* testContext)
+{
+	uint32_t M[GPU_WORK_INDEXES * MAX_N_SIZE];
+	uint32_t bits = 0;
+	uint32_t N_Size = 0;
+	uint32_t* mp = &M[0];
+
+	// Get errors when not supplying full range.
+	if (listSize != GPU_WORK_INDEXES) return false;
+
+	for (uint32_t i(0); i < listSize; ++i) {
+		mpz_mul_ui(z_temp, _primorial, indexes[i]);
+		mpz_add(z_temp, z_temp, z_ploop);
+
+		if (bits == 0) {
+			bits = mpz_sizeinbase(z_temp, 2);
+			N_Size = (bits >> 5) + ((bits & 0x1f) > 0);
+
+			if (N_Size > MAX_N_SIZE) return false;
+		}
+		else {
+			assert(bits == mpz_sizeinbase(z_temp, 2));
+		}
+
+		memcpy(mp, z_temp->_mp_d, N_Size * 4);
+		mp += N_Size;
+	}
+
+	primeTest(gpuContext, N_Size, listSize, M, isPrime, &workFn, testContext);
+	return true;
+}
+
+void Miner::finishGpuTests(GpuTestContext* cxt) {
+	//std::cout << "Finish " << cxt->n_indexes << " tests.  GPU Q: " << _gpuWorkQueue.size() << std::endl;
+	for (uint32_t idx(0) ; idx < cxt->n_indexes ; idx++) {
+		if (_currentHeight != _workData[cxt->workDataIndex].verifyBlock.height) break;
+
+		uint8_t tupleLength(0);
+		mpz_mul_ui(cxt->z_temp, _primorial, cxt->indexes[idx]);
+		mpz_add(cxt->z_temp, cxt->z_temp, cxt->z_ploop);
+
+		mpz_sub(cxt->z_temp2, cxt->z_temp, _workData[cxt->workDataIndex].z_verifyTarget); // offset = tested - target
+
+		tupleLength++;
+		_manager->incTupleCount(tupleLength);
+
+		// Note start at 1 - we've already tested bias 0
+		uint16_t offsetSum(0);
+		for (std::vector<uint64_t>::size_type i(1) ; i < _parameters.primeTupleOffset.size() ; i++) {
+			mpz_add_ui(cxt->z_temp, cxt->z_temp, _parameters.primeTupleOffset[i]);
+			offsetSum += _parameters.primeTupleOffset[i];
+			mpz_sub_ui(cxt->z_ft_n, cxt->z_temp, 1);
+			mpz_powm(cxt->z_ft_r, cxt->z_ft_b, cxt->z_ft_n, cxt->z_temp);
+			if (mpz_cmp_ui(cxt->z_ft_r, 1) == 0) {
+				tupleLength++;
+				_manager->incTupleCount(tupleLength);
+			}
+			else if (!_parameters.solo) {
+				int candidatesRemaining(5 - i);
+				if ((tupleLength + candidatesRemaining) < 4) break;
+			}
+			else break;
+		}
+
+		if (_parameters.solo) {
+			if (tupleLength < _parameters.tupleLengthMin) continue;
+		}
+		else if (tupleLength < 4) continue;
+
+		// Generate nOffset and submit
+		for (uint32_t d(0) ; d < (uint32_t) std::min(32/((uint32_t) sizeof(mp_limb_t)), (uint32_t)cxt->z_temp2->_mp_size) ; d++)
+			*(mp_limb_t*) (_workData[cxt->workDataIndex].verifyBlock.bh.nOffset + d*sizeof(mp_limb_t)) = cxt->z_temp2->_mp_d[d];
+		_workData[cxt->workDataIndex].verifyBlock.primes = tupleLength;
+		if (_manager->options().mode() == "Benchmark") {
+			mpz_class n(cxt->z_temp);
+			std::cout << "Found n = " << n - offsetSum << std::endl;
+			if (_manager->options().tuplesFile() != "None") {
+				_tupleFileLock.lock();
+				std::ofstream file(_manager->options().tuplesFile(), std::ios::app);
+				if (file)
+					file << static_cast<uint16_t>(tupleLength) << "-tuple: " << n - offsetSum << std::endl;
+				else
+					std::cerr << "Unable to write file " << _manager->options().tuplesFile() << " in order to write a tuple :|" << std::endl;
+				_tupleFileLock.unlock();
+			}
+		}
+		_manager->submitWork(_workData[cxt->workDataIndex].verifyBlock);
+	}
+
+	if (cxt->workDataIndex != 0xffff)
+		_workDoneQueue.push_back(cxt->workDataIndex);
+}
+
+void Miner::_gpuThread() {
+/* Check for a prime cluster. Uses the fermat test - jh's code noted that it is
+slightly faster. Could do an MR test as a follow-up, but the server can do this
+too for the one-in-a-whatever case that Fermat is wrong. */
+	mpz_t z_ploop, z_temp;
+	GpuTestContext testContext;
+	testContext.pMiner = this;
+	testContext.n_indexes = 0;
+	testContext.workDataIndex = 0xffff;
+
+	mpz_init(testContext.z_ft_r);
+	mpz_init_set_ui(testContext.z_ft_b, 2);
+	mpz_init(testContext.z_ft_n);
+	mpz_init(testContext.z_temp);
+	mpz_init(testContext.z_temp2);
+	mpz_init(testContext.z_ploop);
+	mpz_init(z_ploop);
+	mpz_init(z_temp);
+
+	struct PrimeTestCxt* gpuContext = primeTestInit();
+
+	while (true) {
+		auto job(_gpuWorkQueue.pop_front());
+		if (_gpuWorkQueue.size() == 0) std::cout << "GPU Q empty" << std::endl;
+		if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) {
+			if (testContext.workDataIndex != 0xffff)
+				_workDoneQueue.push_back(testContext.workDataIndex);
+			testContext.n_indexes = 0;
+			testContext.workDataIndex = 0xffff;
+			_workDoneQueue.push_back(job.workDataIndex);
+			continue;
+		}
+
+		auto startTime(std::chrono::high_resolution_clock::now());
+
+		mpz_mul_ui(z_ploop, _primorial, job.testWork.loop*_parameters.sieveSize);
+		mpz_add(z_ploop, z_ploop, _workData[job.workDataIndex].z_verifyRemainderPrimorial);
+		mpz_add(z_ploop, z_ploop, _workData[job.workDataIndex].z_verifyTarget);
+		mpz_add_ui(z_ploop, z_ploop, _primorialOffsetDiffToFirst[job.testWork.offsetId]);
+
+		uint32_t isPrime[GPU_WORK_INDEXES];
+		uint32_t listSize = job.testWork.n_indexes;
+		bool testDone = _testPrimesGpu(gpuContext, job.testWork.indexes, isPrime, listSize, z_ploop, z_temp, &testContext);
+		assert(testDone);
+
+		testContext.n_indexes = 0;
+		testContext.workDataIndex = job.workDataIndex;
+		mpz_set(testContext.z_ploop, z_ploop);
+		for (uint32_t i(0); i < listSize; i++) {
+#if 0
+			mpz_mul_ui(testContext.z_temp, _primorial, job.testWork.indexes[i]);
+			mpz_add(testContext.z_temp, testContext.z_temp, testContext.z_ploop);
+
+			mpz_sub_ui(testContext.z_ft_n, testContext.z_temp, 1);
+			mpz_powm(testContext.z_ft_r, testContext.z_ft_b, testContext.z_ft_n, testContext.z_temp);
+
+			if (mpz_cmp_ui(testContext.z_ft_r, 1) == 0) assert(isPrime[i]);
+			else assert(!isPrime[i]);
+#endif
+
+			_manager->incTupleCount(0);
+			if (isPrime[i]) {
+					testContext.indexes[testContext.n_indexes++] = job.testWork.indexes[i];
+			}
+		}
+
+		_verifyTime += std::chrono::duration_cast<decltype(_verifyTime)>(std::chrono::high_resolution_clock::now() - startTime);
+	}
+}
+
 void Miner::_getTargetFromBlock(mpz_t z_target, const WorkData &block) {
 	std::vector<uint8_t> powHash(sha256sha256((uint8_t*) &block, 80));
 	
@@ -854,6 +1077,19 @@ void Miner::process(WorkData block) {
 		}
 		_masterLock.unlock();
 	}
+	if (!isMaster && !_gpuExists) {
+		_masterLock.lock();
+		if (!_gpuExists) {
+			_gpuExists = true;
+			isGpu = true;
+		}
+		_masterLock.unlock();
+	}
+
+	if (isGpu) {
+		_gpuThread();
+		return;
+	}
 	
 	if (!isMaster) {
 		_verifyThread();
@@ -879,7 +1115,7 @@ void Miner::process(WorkData block) {
 		while (_workData[workDataIndex].outstandingTests > 0)
 			_workData[_workDoneQueue.pop_front()].outstandingTests--;
 
-		DBG(std::cout << "Block timing: " << _modTime.count() << ", " << _sieveTime.count() << ", " << _verifyTime.count() << "  Tests out: " << _workData[0].outstandingTests << ", " << _workData[1].outstandingTests << std::endl;);
+		std::cout << "Block timing: " << _modTime.count() << ", " << _sieveTime.count() << ", " << _verifyTime.count() << "  Tests out: " << _workData[0].outstandingTests << ", " << _workData[1].outstandingTests << "  GPU Q: " << _gpuWorkQueue.size() << std::endl;
 
 	} while (_manager->getWork(_workData[workDataIndex].verifyBlock));
 

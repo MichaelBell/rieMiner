@@ -21,6 +21,7 @@ union xmmreg_t {
 
 #define WORK_DATAS 2
 #define WORK_INDEXES 64
+#define GPU_WORK_INDEXES 1024
 enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_DUMMY};
 
 struct MinerParameters {
@@ -65,6 +66,16 @@ struct primeTestWork {
 	};
 };
 
+struct gpuTestWork {
+	uint32_t workDataIndex;
+	struct {
+		uint64_t loop;
+		uint32_t n_indexes;
+		uint32_t offsetId;
+		uint32_t indexes[GPU_WORK_INDEXES];
+	} testWork;
+};
+
 struct MinerWorkData {
 	mpz_t z_verifyTarget, z_verifyRemainderPrimorial;
 	WorkData verifyBlock;
@@ -89,6 +100,7 @@ class Miner {
 	
 	tsQueue<primeTestWork, 1024> _modWorkQueue;
 	tsQueue<primeTestWork, 4096> _verifyWorkQueue;
+	tsQueue<gpuTestWork, 1024> _gpuWorkQueue;
 	tsQueue<int64_t, 9216> _workDoneQueue;
 	mpz_t _primorial;
 	uint64_t _nPrimes, _entriesPerSegment, _primeTestStoreOffsetsSize, _startingPrimeIndex, _sparseLimit;
@@ -98,6 +110,7 @@ class Miner {
 	std::chrono::microseconds _modTime, _sieveTime, _verifyTime;
 	
 	bool _masterExists;
+	bool _gpuExists;
 	std::mutex _masterLock, _tupleFileLock;
 
 	uint64_t _curWorkDataIndex;
@@ -151,6 +164,8 @@ class Miner {
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex);
 	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp);
 	void _verifyThread();
+	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp, struct GpuTestContext* testContext);
+	void _gpuThread();
 	void _getTargetFromBlock(mpz_t z_target, const WorkData& block);
 	void _processOneBlock(uint32_t workDataIndex, bool isNewHeight);
 	
@@ -167,6 +182,7 @@ class Miner {
 		_startingPrimeIndex = 0;
 		_sparseLimit = 0;
 		_masterExists = false;
+		_gpuExists = false;
 	}
 	
 	void init();
@@ -181,6 +197,8 @@ class Miner {
 	}
 	bool running() {return _running;}
 	void updateHeight(uint32_t height) {_currentHeight = height;}
+
+	void finishGpuTests(struct GpuTestContext* cxt);
 };
 
 #endif
