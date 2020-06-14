@@ -30,6 +30,7 @@ struct MinerParameters {
 	uint64_t primorialNumber, primeTableLimit;
 	bool solo;
 	int sieveWorkers;
+	int gpuWorkers;
 	uint64_t sieveBits, sieveSize, sieveWords, maxIncrements, maxIter;
 	std::vector<uint64_t> primes, inverts, modPrecompute, primeTupleOffset, primorialOffsets;
 	
@@ -39,6 +40,7 @@ struct MinerParameters {
 		primorialNumber(40), primeTableLimit(2147483648),
 		solo(true),
 		sieveWorkers(2),
+		gpuWorkers(0),
 		sieveBits(25), sieveSize(1UL << sieveBits), sieveWords(sieveSize/64), maxIncrements(1ULL << 29), maxIter(maxIncrements/sieveSize),
 		primeTupleOffset{0, 4, 2, 4, 2, 4},
 		primorialOffsets{4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull,
@@ -110,7 +112,7 @@ class Miner {
 	std::chrono::microseconds _modTime, _sieveTime, _verifyTime;
 	
 	bool _masterExists;
-	bool _gpuExists;
+	int _gpuThreadsCreated;
 	std::mutex _masterLock, _tupleFileLock;
 
 	uint64_t _curWorkDataIndex;
@@ -182,7 +184,7 @@ class Miner {
 		_startingPrimeIndex = 0;
 		_sparseLimit = 0;
 		_masterExists = false;
-		_gpuExists = false;
+		_gpuThreadsCreated = 0;
 	}
 	
 	void init();

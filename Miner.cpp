@@ -27,6 +27,7 @@ extern "C" {
 
 void Miner::init() {
 	_parameters.threads = _manager->options().threads();
+	_parameters.gpuWorkers = _manager->options().gpuWorkers();
 	_parameters.primorialOffsets = _manager->options().primorialOffsets();
 	_parameters.sieveWorkers = _manager->options().sieveWorkers();
 	if (_parameters.sieveWorkers == 0) {
@@ -36,6 +37,8 @@ void Miner::init() {
 	_parameters.sieveWorkers = std::min(_parameters.sieveWorkers, MAX_SIEVE_WORKERS);
 	_parameters.sieveWorkers = std::min(_parameters.sieveWorkers, int(_parameters.primorialOffsets.size()));
 	std::cout << "Sieve Workers = " << _parameters.sieveWorkers << std::endl;
+	if (_parameters.gpuWorkers > 0)
+		std::cout << "GPU Workers = " << _parameters.gpuWorkers << std::endl;
 	std::cout << "Best SIMD instructions supported:";
 	if (_cpuInfo.hasAVX512()) std::cout << " AVX-512";
 	else if (_cpuInfo.hasAVX2()) {
@@ -538,7 +541,9 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 		gw.testWork.offsetId = sieve.id;
 		gw.testWork.loop = loop;
 		gw.workDataIndex = workDataIndex;
-		int useGPU = std::max(std::min(8u, 64 - _gpuWorkQueue.size()), 0u);
+		int useGPU = 0;
+		if (_parameters.gpuWorkers > 0)
+			useGPU = std::max(std::min(8u, 64 - _gpuWorkQueue.size()), 0u);
 		
 		bool stop(false);
 		uint64_t *sieve64((uint64_t*) sieve.sieve);
@@ -1077,10 +1082,10 @@ void Miner::process(WorkData block) {
 		}
 		_masterLock.unlock();
 	}
-	if (!isMaster && !_gpuExists) {
+	if (!isMaster && _gpuThreadsCreated < _parameters.gpuWorkers) {
 		_masterLock.lock();
-		if (!_gpuExists) {
-			_gpuExists = true;
+		if (_gpuThreadsCreated < _parameters.gpuWorkers) {
+			_gpuThreadsCreated++;
 			isGpu = true;
 		}
 		_masterLock.unlock();

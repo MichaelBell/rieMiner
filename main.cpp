@@ -193,6 +193,10 @@ void Options::loadConf() {
 					try {_sieveWorkers = std::stoi(value);}
 					catch (...) {_sieveWorkers = 0;}
 				}
+				else if (key == "GpuWorkers") {
+					try {_gpuWorkers = std::stoi(value);}
+					catch (...) {_gpuWorkers = 0;}
+				}
 				else if (key == "PrimeTableLimit") {
 					try {_primeTableLimit = std::stoll(value);}
 					catch (...) {_primeTableLimit = 2147483648;}

@@ -25,7 +25,7 @@ class Options {
 	bool _enableAvx2;
 	std::string _host, _username, _password, _mode, _payoutAddress, _secret, _tuplesFile;
 	AddressFormat _payoutAddressFormat;
-	uint16_t _debug, _port, _threads, _sieveWorkers, _sieveBits, _refreshInterval, _tupleLengthMin, _donate;
+	uint16_t _debug, _port, _threads, _gpuWorkers, _sieveWorkers, _sieveBits, _refreshInterval, _tupleLengthMin, _donate;
 	uint32_t _benchmarkDifficulty, _benchmarkTimeLimit, _benchmark2tupleCountLimit;
 	uint64_t _primeTableLimit, _primorialNumber;
 	std::vector<uint64_t> _primorialOffsets, _constellationType;
@@ -48,6 +48,7 @@ class Options {
 		_debug(0),
 		_port(28332),
 		_threads(8),
+		_gpuWorkers(0),
 		_sieveWorkers(0),
 		_sieveBits(25),
 		_refreshInterval(30),
@@ -79,6 +80,7 @@ class Options {
 	std::string secret() const {return _secret;}
 	std::string tuplesFile() const {return _tuplesFile;}
 	uint16_t threads() const {return _threads;}
+	uint16_t gpuWorkers() const {return _gpuWorkers;}
 	uint16_t sieveWorkers() const {return _sieveWorkers;}
 	uint64_t primeTableLimit() const {return _primeTableLimit;}
 	uint16_t sieveBits() const {return _sieveBits;}
