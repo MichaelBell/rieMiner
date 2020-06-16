@@ -111,7 +111,7 @@ void BMClient::sendWork(const WorkData &work) const {
 
 WorkData BMClient::workData() const {
 	WorkData wd;
-	if (_height == 1) {
+	if (_height > 0) {
 		memcpy(&wd.bh, &_bh, 128);
 		wd.height = _height;
 		wd.targetCompact = getCompact(wd.bh.bits);
@@ -119,3 +119,21 @@ WorkData BMClient::workData() const {
 	}
 	return wd;
 }
+
+bool TestClient::_getWork() {
+	if (_inited) {
+		if (--_callsToNextDiff == 0) {
+			_callsToNextDiff = 100;
+			_difficulty += 19;
+			_height++;
+			_manager->updateDifficulty(_difficulty, _height);
+			_manager->newHeightMessage(_height);
+		}
+
+		_bh = BlockHeader();
+		((uint32_t*) &_bh.bits)[0] = 256*_difficulty + 33554432;
+		return true;
+	}
+	else return false;
+}
+

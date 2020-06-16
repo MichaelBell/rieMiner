@@ -19,7 +19,10 @@ void WorkManager::init() {
 		_client = std::unique_ptr<Client>(new GBTClient(shared_from_this()));
 	else if (_options.mode() == "Pool")
 		_client = std::unique_ptr<Client>(new StratumClient(shared_from_this()));
-	else _client = std::unique_ptr<Client>(new BMClient(shared_from_this()));
+	else if (_options.mode() == "Benchmark")
+		_client = std::unique_ptr<Client>(new BMClient(shared_from_this()));
+	else
+		_client = std::unique_ptr<Client>(new TestClient(shared_from_this()));
 	
 	_miner = std::unique_ptr<Miner>(new Miner(shared_from_this()));
 	_miner->init();

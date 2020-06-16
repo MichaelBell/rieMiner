@@ -37,7 +37,7 @@ StratumClient.o: StratumClient.cpp
 GBTClient.o: GBTClient.cpp
 	$(CXX) $(CFLAGS) -c -o GBTClient.o GBTClient.cpp
 
-Client.o: Client.cpp
+Client.o: Client.cpp Client.hpp
 	$(CXX) $(CFLAGS) -c -o Client.o Client.cpp
 
 Stats.o: Stats.cpp

@@ -99,8 +99,9 @@ class RPCClient : public Client {
 // For BenchMarking, emulates a client to allow similar conditions to actual mining by providing
 // dummy randomized work at the desired difficulty
 class BMClient : public Client {
+	protected:
 	BlockHeader _bh;
-	uint32_t _height;
+	uint32_t _height = 0;
 	
 	bool _getWork();
 	
@@ -109,6 +110,17 @@ class BMClient : public Client {
 	bool connect();
 	void sendWork(const WorkData&) const;
 	WorkData workData() const;
+};
+
+// For testing, runs through different difficulties and interrupts processing similarly to
+// real mining
+class TestClient : public BMClient {
+	uint32_t _difficulty = 304;
+	uint32_t _callsToNextDiff = 1;
+	bool _getWork();
+	
+	public:
+	using BMClient::BMClient;
 };
 
 #endif
