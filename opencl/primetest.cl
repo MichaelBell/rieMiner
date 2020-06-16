@@ -231,11 +231,20 @@ __kernel void fermat_test(__global const uint *M_in, __global const uint *Mi_in,
 
 	//const uint shift = clz(M[N_Size - 1]);
 	const uint highbit = ((uint)1) << 31;
-	uint startbit = highbit >> shift;
+	uint startbit;
+	int en = N_Size;
+	if (shift < 24)
+	{
+		startbit = highbit >> (shift + 8);
+	}
+	else
+	{
+		startbit = highbit >> (shift - 24);
+		en--;
+	}
 
 	const uint mi = Mi_in[get_global_id(0)];
 
-	int en = N_Size;
 	while (en-- > 0)
 	{
 		uint bit = startbit;

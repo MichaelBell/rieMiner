@@ -82,9 +82,9 @@ static void setup_fermat(int N_Size, int num, const mp_limb_t* M, mp_limb_t* MI,
 			mp = mshifted;
 		}
 
-		for (mp_size_t i = 0; i < mn; ++i) rp[i] = 0;
-		rp[mn] = 1 << minv.shift;
-		mpn_div_r_preinv_ns(rp, mn + 1, mp, mn, &minv);
+		for (mp_size_t i = 0; i < mn+4; ++i) rp[i] = 0;
+		rp[mn+4] = 1 << minv.shift;
+		mpn_div_r_preinv_ns(rp, mn + 5, mp, mn, &minv);
 
 		if (minv.shift > 0)
 		{
@@ -182,7 +182,7 @@ PrimeTestCxt* primeTestInit()
 		(const char **)&source_str, (const size_t *)&source_size, &ret);
 	DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
-	cxt->R = (cl_uint*)malloc(sizeof(cl_uint)*(MAX_N_SIZE*MAX_JOB_SIZE + 1));
+	cxt->R = (cl_uint*)malloc(sizeof(cl_uint)*(MAX_N_SIZE*MAX_JOB_SIZE + 5));
 	cxt->MI = (cl_uint*)malloc(sizeof(cl_uint)*MAX_JOB_SIZE);
 	cxt->N_Size = 0;
 
@@ -195,9 +195,9 @@ static void primeTestBuild(PrimeTestCxt* cxt, int N_Size, int shift)
 	{
 		clReleaseKernel(cxt->kernel);
 	}
-	if (N_Size > MAX_N_SIZE)
+	if (N_Size < 6 || N_Size > MAX_N_SIZE)
 	{
-		printf("N Size above maximum\n");
+		printf("N Size out of range\n");
 		abort();
 	}
 
