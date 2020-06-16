@@ -171,7 +171,7 @@ void Options::loadConf() {
 					catch (...) {_debug = 0;}
 				}
 				else if (key == "Mode") {
-					if (value == "Solo" || value == "Pool" || value == "Benchmark")
+					if (value == "Solo" || value == "Pool" || value == "Benchmark" || value == "Test")
 						_mode = value;
 					else std::cout << "Invalid mode!" << std::endl;
 				}
@@ -290,6 +290,9 @@ void Options::loadConf() {
 		if (_benchmark2tupleCountLimit != 0) std::cout << " 2-tuple count limit: " << _benchmark2tupleCountLimit << " 2-tuples" << std::endl;
 		if (_benchmarkDifficulty == 1600 && _primeTableLimit == 2147483648 && _benchmark2tupleCountLimit >= 50000 && _benchmarkTimeLimit == 0)
 			std::cout << " VALID parameters for Standard Benchmark" << std::endl;
+	}
+	else if (_mode == "Test") {
+		std::cout << "Test mode." << std::endl;
 	}
 	else {
 		if (_mode == "Solo") std::cout << "Solo mining";

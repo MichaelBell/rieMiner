@@ -897,13 +897,15 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 	struct PrimeTestCxt* gpuContext = primeTestInit();
 
 	while (true) {
-		auto job(_gpuWorkQueue.pop_front());
-		if (_gpuWorkQueue.size() == 0) std::cout << "GPU Q empty" << std::endl;
-		if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) {
-			if (testContext.workDataIndex != 0xffff)
-				_workDoneQueue.push_back(testContext.workDataIndex);
+		if (testContext.workDataIndex != 0xffff && _gpuWorkQueue.size() == 0) {
+			std::cout << "GPU Q empty" << std::endl;
+			finishGpuTests(&testContext);
 			testContext.n_indexes = 0;
 			testContext.workDataIndex = 0xffff;
+		}
+
+		auto job(_gpuWorkQueue.pop_front());
+		if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) {
 			_workDoneQueue.push_back(job.workDataIndex);
 			continue;
 		}
