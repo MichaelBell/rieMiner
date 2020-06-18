@@ -162,6 +162,7 @@ void Miner::init() {
 	}
 	if (_sparseLimit == 0) {
 		_nPrimes &= (~1ull);
+		if (_nPrimes < _nLoPrimes) _nLoPrimes = _nPrimes;
 		_sparseLimit = _nPrimes;
 	}
 	

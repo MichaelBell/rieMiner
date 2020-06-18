@@ -41,7 +41,7 @@ struct MinerParameters {
 		tupleLengthMin(6),
 		primorialNumber(40), primeTableLimit(2147483648),
 		solo(true),
-		saveRemainders(true),
+		saveRemainders(false),
 		sieveWorkers(2),
 		gpuWorkers(0),
 		sieveBits(25), sieveSize(1UL << sieveBits), sieveWords(sieveSize/64), maxIncrements(1ULL << 29), maxIter(maxIncrements/sieveSize),
