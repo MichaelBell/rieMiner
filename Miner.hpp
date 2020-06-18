@@ -28,21 +28,25 @@ struct MinerParameters {
 	uint8_t tupleLengthMin;
 	uint64_t primorialNumber, primeTableLimit;
 	bool solo;
+	bool saveRemainders;
 	int sieveWorkers;
 	uint64_t sieveBits, sieveSize, sieveWords, maxIncrements, maxIter;
-	std::vector<uint64_t> primes, inverts, modPrecompute, primeTupleOffset, primorialOffsets;
+	std::vector<uint32_t> primes, inverts, remainders;
+	std::vector<uint64_t> primesHi, invertsHi, remaindersHi, modPrecompute, primeTupleOffset, primorialOffsets;
 	
 	MinerParameters() :
 		threads(8),
 		tupleLengthMin(6),
 		primorialNumber(40), primeTableLimit(2147483648),
 		solo(true),
+		saveRemainders(true),
 		sieveWorkers(2),
 		sieveBits(25), sieveSize(1UL << sieveBits), sieveWords(sieveSize/64), maxIncrements(1ULL << 29), maxIter(maxIncrements/sieveSize),
 		primeTupleOffset{0, 4, 2, 4, 2, 4},
 		primorialOffsets{4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull,
 		                 7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull,
 		                 8145217177ull, 8145220537ull, 8145223897ull, 8145227257ull} {}
+
 };
 
 struct primeTestWork {
@@ -58,9 +62,11 @@ struct primeTestWork {
 		struct {
 			uint64_t start;
 			uint64_t end;
+			uint32_t remainderIdx;
 		} modWork;
 		struct {
 			uint32_t sieveId;
+			uint32_t offsetId;
 		} sieveWork;
 	};
 };
@@ -91,7 +97,7 @@ class Miner {
 	tsQueue<primeTestWork, 4096> _verifyWorkQueue;
 	tsQueue<int64_t, 9216> _workDoneQueue;
 	mpz_t _primorial;
-	uint64_t _nPrimes, _entriesPerSegment, _primeTestStoreOffsetsSize, _startingPrimeIndex, _sparseLimit;
+	uint64_t _nPrimes, _nLoPrimes, _entriesPerSegment, _primeTestStoreOffsetsSize, _startingPrimeIndex, _sparseLimit;
 	std::vector<uint64_t> _halfPrimeTupleOffset, _primorialOffsetDiff, _primorialOffsetDiffToFirst;
 	SieveInstance* _sieves;
 
@@ -145,14 +151,19 @@ class Miner {
 	}
 	
 	void _putOffsetsInSegments(SieveInstance& sieve, uint64_t *offsets, uint64_t* counts, int n_offsets);
-	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i);
+	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i, uint32_t remainderIdx);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
-	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex);
+	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t offsetId);
 	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp);
 	void _verifyThread();
 	void _getTargetFromBlock(mpz_t z_target, const WorkData& block);
-	void _processOneBlock(uint32_t workDataIndex, bool isNewHeight);
+	void _processOneBlock(uint32_t& workDataIndex, bool isNewHeight);
+
+	uint64_t _getPrime(uint64_t i) const { 
+		if (i < _nLoPrimes) return _parameters.primes[i];
+		else return _parameters.primesHi[i - _nLoPrimes]; 
+	}
 	
 	public:
 	Miner(const std::shared_ptr<WorkManager> &manager) {
