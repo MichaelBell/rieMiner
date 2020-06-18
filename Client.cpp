@@ -80,6 +80,7 @@ json_t* RPCClient::sendRPCCall(const std::string& req) const {
 bool BMClient::_getWork() {
 	if (_inited) {
 		_bh = BlockHeader();
+		_bh.curtime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 		((uint32_t*) &_bh.bits)[0] = 256*_manager->options().benchmarkDifficulty() + 33554432;
 		_height = 1;
 		return true;
@@ -131,6 +132,7 @@ bool TestClient::_getWork() {
 		}
 
 		_bh = BlockHeader();
+		_bh.curtime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 		((uint32_t*) &_bh.bits)[0] = 256*_difficulty + 33554432;
 		return true;
 	}
