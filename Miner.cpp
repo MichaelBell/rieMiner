@@ -43,6 +43,7 @@ void Miner::init() {
 	else if (_cpuInfo.hasAVX()) std::cout << " AVX";
 	else std::cout << " AVX not suppported!";
 	std::cout << std::endl;
+	_parameters.maxIncrements = 1UL << _manager->options().maxIncrements();
 	_parameters.sieveBits = _manager->options().sieveBits();
 	_parameters.sieveSize = 1 << _parameters.sieveBits;
 	_parameters.sieveWords = _parameters.sieveSize/64;
@@ -52,6 +53,7 @@ void Miner::init() {
 	_parameters.primeTableLimit = _manager->options().primeTableLimit();
 	_parameters.primorialNumber  = _manager->options().primorialNumber();
 	_parameters.primeTupleOffset = _manager->options().constellationType();
+	_parameters.saveRemainders = _manager->options().saveRemainders();
 	
 	// Empirical formula, should work well in most cases for 6-tuples.
 	if (_manager->options().constellationType().size() == 6) {

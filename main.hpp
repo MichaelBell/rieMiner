@@ -22,11 +22,11 @@ extern int DEBUG;
 #define DBG_VERIFY(x) if (DEBUG > 1) { x; };
 
 class Options {
-	bool _enableAvx2;
+	bool _enableAvx2, _saveRemainders;
 	std::string _host, _username, _password, _mode, _payoutAddress, _secret, _tuplesFile;
 	AddressFormat _payoutAddressFormat;
 	uint16_t _debug, _port, _threads, _sieveWorkers, _sieveBits, _refreshInterval, _tupleLengthMin, _donate;
-	uint32_t _benchmarkDifficulty, _benchmarkTimeLimit, _benchmark2tupleCountLimit;
+	uint32_t _benchmarkDifficulty, _benchmarkTimeLimit, _benchmark2tupleCountLimit, _maxIncrements;
 	uint64_t _primeTableLimit, _primorialNumber;
 	std::vector<uint64_t> _primorialOffsets, _constellationType;
 	std::vector<std::string> _rules;
@@ -37,6 +37,7 @@ class Options {
 	public:
 	Options() : // Default options: Standard Benchmark with 8 threads
 		_enableAvx2(false),
+		_saveRemainders(false),
 		_host("127.0.0.1"),
 		_username(""),
 		_password(""),
@@ -56,6 +57,7 @@ class Options {
 		_benchmarkDifficulty(1600),
 		_benchmarkTimeLimit(0),
 		_benchmark2tupleCountLimit(50000),
+		_maxIncrements(29),
 		_primeTableLimit(2147483648),
 		_primorialNumber(40),
 		_primorialOffsets{4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull,
@@ -68,6 +70,7 @@ class Options {
 	void loadConf();
 	
 	bool enableAvx2() const {return _enableAvx2;}
+	bool saveRemainders() const {return _saveRemainders;}
 	std::string mode() const {return _mode;}
 	std::string host() const {return _host;}
 	uint16_t port() const {return _port;}
@@ -88,6 +91,7 @@ class Options {
 	uint32_t benchmarkDifficulty() const {return _benchmarkDifficulty;}
 	uint32_t benchmarkTimeLimit() const {return _benchmarkTimeLimit;}
 	uint32_t benchmark2tupleCountLimit() const {return _benchmark2tupleCountLimit;}
+	uint32_t maxIncrements() const {return _maxIncrements;}
 	std::vector<uint64_t> constellationType() const {return _constellationType;}
 	uint64_t primorialNumber() const {return _primorialNumber;}
 	std::vector<uint64_t> primorialOffsets() const {return _primorialOffsets;}

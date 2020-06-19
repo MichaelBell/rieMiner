@@ -184,6 +184,7 @@ void Options::loadConf() {
 				else if (key == "Password") _password = value;
 				else if (key == "PayoutAddress") setPayoutAddress(value);
 				else if (key == "EnableAVX2") _enableAvx2 = (value == "Yes");
+				else if (key == "SaveRemainders") _saveRemainders = (value == "Yes");
 				else if (key == "Secret!!!") _secret = value;
 				else if (key == "Threads") {
 					try {_threads = std::stoi(value);}
@@ -229,6 +230,10 @@ void Options::loadConf() {
 				else if (key == "Benchmark2tupleCountLimit") {
 					try {_benchmark2tupleCountLimit = std::stoll(value);}
 					catch (...) {_benchmark2tupleCountLimit = 50000;}
+				}
+				else if (key == "MaxIncrements") {
+					try {_maxIncrements = std::stoi(value);}
+					catch (...) {_maxIncrements = 29;}
 				}
 				else if (key == "TuplesFile")
 					_tuplesFile = value;
