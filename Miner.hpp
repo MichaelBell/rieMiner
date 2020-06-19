@@ -119,6 +119,7 @@ class Miner {
 		uint32_t old(pending[pos]);
 		if (old != 0) {
 			// assert(old < _parameters.sieveSize);
+#if 0
 			if (old >= _parameters.sieveSize) {
 				std::cerr << "_addToPending: old = " << old << " is bigger than _parameters.sieveSize = " << _parameters.sieveSize << ", which should never happen!" << std::endl;
 				std::cout << "This may happen in an unstable or faulty computer. Please check your hardware or CPU/RAM frequency/voltage settings." << std::endl;
@@ -126,6 +127,7 @@ class Miner {
 				std::cout << "Temporarily changing old to dummy value of " << _parameters.sieveSize - 1 << " to allow mining to continue." << std::endl;
 				old = _parameters.sieveSize - 1;
 			}
+#endif
 			sieve[old >> 3] |= (1 << (old & 7));
 		}
 		pending[pos] = ent;
