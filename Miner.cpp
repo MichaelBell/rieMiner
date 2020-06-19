@@ -453,37 +453,23 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 
 void Miner::_processSieve9(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i) {
         assert(_parameters.primeTupleOffset.size() == 9);
-        uint32_t pending[9] = { 0 };
+	uint32_t pending[PENDING_SIZE];
+	uint64_t pending_pos(0);
+	_initPending(pending);
 
         for (uint64_t i(start_i) ; i < end_i ; i++) {
                 const uint32_t p(_parameters.primes[i]);
                 uint32_t* offset = &offsets[i*9];
-                uint64_t mask = 0x1ff;
                 for (uint64_t f(0) ; f < 9; f++) {
-			if (offset[f] >= _parameters.sieveSize) {
-				offset[f] -= _parameters.sieveSize;
-				mask &= ~(1 << f);
-                        }
-		}
-                while (mask) {
-                        for (uint64_t f(0) ; f < 9; f++) {
-                                if (mask & (1 << f)) {
-                                        __builtin_prefetch(&sieve[offset[f] >> 3]);
-                                        sieve[pending[f] >> 3] |= 1 << (pending[f] & 7);
-                                        pending[f] = offset[f];
-                                        offset[f] += p;
-                                        if (offset[f] >= _parameters.sieveSize) {
-                                                offset[f] -= _parameters.sieveSize;
-                                                mask &= ~(1 << f);
-                                        }
-                                }
-                        }
+			while (offset[f] < _parameters.sieveSize) {
+				_addToPending(sieve, pending, pending_pos, offset[f]);
+				offset[f] += p;
+			}
+			offset[f] -= _parameters.sieveSize;
                 }
         }
 
-        for (uint64_t f(0); f < 9; f++) {
-                sieve[pending[f] >> 3] |= 1 << (pending[f] & 7);
-        }
+	_termPending(sieve, pending);
 }
 
 void Miner::_processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i) {
