@@ -132,8 +132,8 @@ class Miner {
 	void _addToPending(uint8_t *sieve, uint32_t pending[PENDING_SIZE], uint64_t &pos, uint32_t ent) {
 		__builtin_prefetch(&(sieve[ent >> 3]));
 		uint32_t old(pending[pos]);
-		if (old != 0) {
-			// assert(old < _parameters.sieveSize);
+		// assert(old < _parameters.sieveSize);
+#if 0
 			if (old >= _parameters.sieveSize) {
 				std::cerr << "_addToPending: old = " << old << " is bigger than _parameters.sieveSize = " << _parameters.sieveSize << ", which should never happen!" << std::endl;
 				std::cout << "This may happen in an unstable or faulty computer. Please check your hardware or CPU/RAM frequency/voltage settings." << std::endl;
@@ -141,8 +141,8 @@ class Miner {
 				std::cout << "Temporarily changing old to dummy value of " << _parameters.sieveSize - 1 << " to allow mining to continue." << std::endl;
 				old = _parameters.sieveSize - 1;
 			}
-			sieve[old >> 3] |= (1 << (old & 7));
-		}
+#endif
+		sieve[old >> 3] |= (1 << (old & 7));
 		pending[pos] = ent;
 		pos++;
 		pos &= PENDING_SIZE - 1;
@@ -169,6 +169,7 @@ class Miner {
 	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i, uint32_t remainderIdx);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
+	void _processSieve9(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t offsetId);
 	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp);
 	void _verifyThread();
