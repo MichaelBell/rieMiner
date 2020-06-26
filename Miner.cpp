@@ -632,7 +632,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 	}
 }
 
-bool Miner::_testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_tmp) {
+bool Miner::_testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_tmp, uint32_t height) {
 	uint32_t M[WORK_INDEXES * MAX_N_SIZE], bits(0), N_Size;
 	uint32_t *mp(&M[0]);
 	for (uint32_t i(0); i < WORK_INDEXES; ++i) {
@@ -650,7 +650,7 @@ bool Miner::_testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WO
 		mp += N_Size;
 	}
 
-	fermatTest(N_Size, WORK_INDEXES, M, is_prime, _cpuInfo.hasAVX512());
+	fermatTest(N_Size, WORK_INDEXES, M, is_prime, _cpuInfo.hasAVX512(), [&]() { return height != _currentHeight; });
 	return true;
 }
 
@@ -697,8 +697,8 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 			bool firstTestDone(false);
 			if (_cpuInfo.hasAVX2() && _manager->options().enableAvx2() && job.testWork.n_indexes == WORK_INDEXES) {
 				uint32_t isPrime[WORK_INDEXES];
-				firstTestDone = _testPrimesIspc(job.testWork.indexes, isPrime, z_ploop, z_tmp);
-				if (firstTestDone) {
+				firstTestDone = _testPrimesIspc(job.testWork.indexes, isPrime, z_ploop, z_tmp, _workData[job.workDataIndex].verifyBlock.height);
+				if (_currentHeight == _workData[job.workDataIndex].verifyBlock.height && firstTestDone) {
 					job.testWork.n_indexes = 0;
 					for (uint32_t i(0) ; i < WORK_INDEXES ; i++) {
 						DBG_VERIFY(({

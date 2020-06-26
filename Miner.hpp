@@ -156,7 +156,7 @@ class Miner {
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve9(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t offsetId);
-	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp);
+	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp, uint32_t height);
 	void _verifyThread();
 	void _getTargetFromBlock(mpz_t z_target, const WorkData& block);
 	void _processOneBlock(uint32_t& workDataIndex, bool isNewHeight);
