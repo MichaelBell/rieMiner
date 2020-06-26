@@ -214,7 +214,7 @@ void Options::loadConf() {
 				else if (key == "Donate") {
 					try {_donate = std::stoi(value);}
 					catch (...) {_donate = 2;}
-					if (_donate == 0) _donate = 1;
+					//if (_donate == 0) _donate = 1;
 					if (_donate > 99) _donate = 99;
 				}
 				else if (key == "BenchmarkDifficulty") {
