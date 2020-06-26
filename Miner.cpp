@@ -130,14 +130,20 @@ void Miner::init() {
 			mpz_init(z_p);
 			const uint64_t endIndex(std::min(_startingPrimeIndex + (j + 1)*blockSize, _nPrimes));
 			for (uint64_t i(_startingPrimeIndex + j*blockSize) ; i < endIndex ; i++) {
-				mpz_set_ui(z_p, _parameters.primes[i]);
-				mpz_invert(z_tmp, _primorial, z_p);
-				if (i < _nLoPrimes)
+				if (i < _nLoPrimes) {
+					mpz_set_ui(z_p, _parameters.primes[i]);
+					mpz_invert(z_tmp, _primorial, z_p);
 					_parameters.inverts[i] = mpz_get_ui(z_tmp);
-				else
-					_parameters.invertsHi[i - _nLoPrimes] = mpz_get_ui(z_tmp);
-				if (i < precompPrimes)
 					rie_mod_1s_4p_cps(&_parameters.modPrecompute[i], _parameters.primes[i]);
+				}
+				else {
+					uint64_t hiIdx = i - _nLoPrimes;
+					mpz_set_ui(z_p, _parameters.primesHi[hiIdx]);
+					mpz_invert(z_tmp, _primorial, z_p);
+					_parameters.invertsHi[hiIdx] = mpz_get_ui(z_tmp);
+					if (i < precompPrimes)
+						rie_mod_1s_4p_cps(&_parameters.modPrecompute[i], _parameters.primesHi[hiIdx]);
+				}
 			}
 			mpz_clear(z_p);
 			mpz_clear(z_tmp);
@@ -150,7 +156,7 @@ void Miner::init() {
 	_primeTestStoreOffsetsSize = 0;
 	_sparseLimit = 0;
 	for (uint64_t i(5) ; i < _nPrimes ; i++) {
-		const uint64_t p(_parameters.primes[i]);
+		const uint64_t p(_getPrime(i));
 		if (p < _parameters.maxIncrements) _primeTestStoreOffsetsSize++;
 		else {
 			if (_sparseLimit == 0) _sparseLimit = i & (~1ull);
