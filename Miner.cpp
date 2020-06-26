@@ -10,7 +10,7 @@
 #include "Miner.hpp"
 
 thread_local bool isMaster(false);
-thread_local bool isGpu(false);
+thread_local int gpuThreadNum(0);
 thread_local uint64_t** offsetStack(NULL);
 thread_local uint64_t** offsetCount(NULL);
 
@@ -27,7 +27,7 @@ extern "C" {
 
 void Miner::init() {
 	_parameters.threads = _manager->options().threads();
-	_parameters.gpuWorkers = _manager->options().gpuWorkers();
+	_parameters.gpuWorkers = _manager->options().gpuDeviceIDs().size();
 	_parameters.primorialOffsets = _manager->options().primorialOffsets();
 	_parameters.sieveWorkers = _manager->options().sieveWorkers();
 	if (_parameters.sieveWorkers == 0) {
@@ -621,7 +621,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 		gw.workDataIndex = workDataIndex;
 		int useGPU = 0;
 		if (_parameters.gpuWorkers > 0)
-			useGPU = std::max(std::min(8u, 64 - _gpuWorkQueue.size()), 0u);
+			useGPU = std::max(std::min(8, 128 - (int)_gpuWorkQueue.size()), 0);
 		
 		bool stop(false);
 		uint64_t *sieve64((uint64_t*) sieve.sieve);
@@ -953,7 +953,7 @@ void Miner::finishGpuTests(GpuTestContext* cxt) {
 		_workDoneQueue.push_back(cxt->workDataIndex);
 }
 
-void Miner::_gpuThread() {
+void Miner::_gpuThread(uint32_t gpuDeviceId) {
 /* Check for a prime cluster. Uses the fermat test - jh's code noted that it is
 slightly faster. Could do an MR test as a follow-up, but the server can do this
 too for the one-in-a-whatever case that Fermat is wrong. */
@@ -972,7 +972,7 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 	mpz_init(z_ploop);
 	mpz_init(z_temp);
 
-	struct PrimeTestCxt* gpuContext = primeTestInit();
+	struct PrimeTestCxt* gpuContext = primeTestInit(gpuDeviceId);
 
 	while (true) {
 		if (testContext.workDataIndex != 0xffff && _gpuWorkQueue.size() == 0) {
@@ -1182,13 +1182,13 @@ void Miner::process(WorkData block) {
 		_masterLock.lock();
 		if (_gpuThreadsCreated < _parameters.gpuWorkers) {
 			_gpuThreadsCreated++;
-			isGpu = true;
+			gpuThreadNum = _gpuThreadsCreated;
 		}
 		_masterLock.unlock();
 	}
 
-	if (isGpu) {
-		_gpuThread();
+	if (gpuThreadNum) {
+		_gpuThread(_manager->options().gpuDeviceIDs()[gpuThreadNum - 1]);
 		return;
 	}
 	

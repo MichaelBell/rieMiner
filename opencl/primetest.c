@@ -126,7 +126,7 @@ typedef struct PrimeTestCxt
 
 #define MAX_JOB_SIZE 1024
 
-PrimeTestCxt* primeTestInit()
+PrimeTestCxt* primeTestInit(uint32_t gpuDeviceId)
 {
 	// Load the kernel source code into the array source_str
 	FILE *fp;
@@ -155,9 +155,24 @@ PrimeTestCxt* primeTestInit()
 
 	ret = clGetPlatformIDs(ret_num_platforms, platforms, NULL);
 	DPRINTF("ret at %d is %d\n", __LINE__, ret);
+	if (ret_num_platforms <= (gpuDeviceId >> 16)) {
+		fprintf(stderr, "Invalid platform ID %d", gpuDeviceId >> 16);
+		exit(1);
+	}
 
-	ret = clGetDeviceIDs(platforms[1], CL_DEVICE_TYPE_ALL, 1,
-						 &cxt->device_id, NULL);
+	cl_uint ret_num_devices;
+
+	ret = clGetDeviceIDs(platforms[gpuDeviceId >> 16], CL_DEVICE_TYPE_ALL, 256, NULL, &ret_num_devices);
+	if (ret_num_devices <= (gpuDeviceId & 0xff)) {
+		fprintf(stderr, "Invalid device ID %d", gpuDeviceId & 0xff);
+		exit(1);
+	}
+	cl_device_id *devices = NULL;
+	devices = (cl_device_id*)malloc(ret_num_devices * sizeof(cl_device_id));
+
+	ret = clGetDeviceIDs(platforms[gpuDeviceId >> 16], CL_DEVICE_TYPE_ALL, ret_num_devices,
+						 devices, NULL);
+	cxt->device_id = devices[gpuDeviceId & 0xff];
 
 	// Create an OpenCL context
 	cxt->context = clCreateContext(NULL, 1, &cxt->device_id, NULL, NULL, &ret);

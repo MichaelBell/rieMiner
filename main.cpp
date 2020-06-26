@@ -193,9 +193,11 @@ void Options::loadConf() {
 					try {_sieveWorkers = std::stoi(value);}
 					catch (...) {_sieveWorkers = 0;}
 				}
-				else if (key == "GpuWorkers") {
-					try {_gpuWorkers = std::stoi(value);}
-					catch (...) {_gpuWorkers = 0;}
+				else if (key == "GpuDeviceIDs") {
+					for (uint16_t i(0) ; i < value.size() ; i++) {if (value[i] == ',') value[i] = ' ';}
+					std::stringstream ids(value);
+					uint32_t tmp;
+					while (ids >> tmp) _gpuDeviceIDs.push_back(tmp);
 				}
 				else if (key == "PrimeTableLimit") {
 					try {_primeTableLimit = std::stoll(value);}

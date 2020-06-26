@@ -174,7 +174,7 @@ class Miner {
 	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp);
 	void _verifyThread();
 	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp, struct GpuTestContext* testContext);
-	void _gpuThread();
+	void _gpuThread(uint32_t gpuDeviceId);
 	void _getTargetFromBlock(mpz_t z_target, const WorkData& block);
 	void _processOneBlock(uint32_t& workDataIndex, bool isNewHeight);
 
