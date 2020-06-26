@@ -976,7 +976,7 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 
 	while (true) {
 		if (testContext.workDataIndex != 0xffff && _gpuWorkQueue.size() == 0) {
-			std::cout << "GPU Q empty" << std::endl;
+			DBG(std::cout << "GPU Q empty" << std::endl;);
 			finishGpuTests(&testContext);
 			testContext.n_indexes = 0;
 			testContext.workDataIndex = 0xffff;
