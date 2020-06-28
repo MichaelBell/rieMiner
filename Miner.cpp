@@ -48,6 +48,7 @@ void Miner::init() {
 	else if (_cpuInfo.hasAVX()) std::cout << " AVX";
 	else std::cout << " AVX not suppported!";
 	std::cout << std::endl;
+	_parameters.maxIncrements = 1UL << _manager->options().maxIncrements();
 	_parameters.sieveBits = _manager->options().sieveBits();
 	_parameters.sieveSize = 1 << _parameters.sieveBits;
 	_parameters.sieveWords = _parameters.sieveSize/64;
@@ -57,6 +58,7 @@ void Miner::init() {
 	_parameters.primeTableLimit = _manager->options().primeTableLimit();
 	_parameters.primorialNumber  = _manager->options().primorialNumber();
 	_parameters.primeTupleOffset = _manager->options().constellationType();
+	_parameters.saveRemainders = _manager->options().saveRemainders();
 	
 	// Empirical formula, should work well in most cases for 6-tuples.
 	if (_manager->options().constellationType().size() == 6) {
@@ -133,14 +135,20 @@ void Miner::init() {
 			mpz_init(z_p);
 			const uint64_t endIndex(std::min(_startingPrimeIndex + (j + 1)*blockSize, _nPrimes));
 			for (uint64_t i(_startingPrimeIndex + j*blockSize) ; i < endIndex ; i++) {
-				mpz_set_ui(z_p, _parameters.primes[i]);
-				mpz_invert(z_tmp, _primorial, z_p);
-				if (i < _nLoPrimes)
+				if (i < _nLoPrimes) {
+					mpz_set_ui(z_p, _parameters.primes[i]);
+					mpz_invert(z_tmp, _primorial, z_p);
 					_parameters.inverts[i] = mpz_get_ui(z_tmp);
-				else
-					_parameters.invertsHi[i - _nLoPrimes] = mpz_get_ui(z_tmp);
-				if (i < precompPrimes)
 					rie_mod_1s_4p_cps(&_parameters.modPrecompute[i], _parameters.primes[i]);
+				}
+				else {
+					uint64_t hiIdx = i - _nLoPrimes;
+					mpz_set_ui(z_p, _parameters.primesHi[hiIdx]);
+					mpz_invert(z_tmp, _primorial, z_p);
+					_parameters.invertsHi[hiIdx] = mpz_get_ui(z_tmp);
+					if (i < precompPrimes)
+						rie_mod_1s_4p_cps(&_parameters.modPrecompute[i], _parameters.primesHi[hiIdx]);
+				}
 			}
 			mpz_clear(z_p);
 			mpz_clear(z_tmp);
@@ -153,7 +161,7 @@ void Miner::init() {
 	_primeTestStoreOffsetsSize = 0;
 	_sparseLimit = 0;
 	for (uint64_t i(5) ; i < _nPrimes ; i++) {
-		const uint64_t p(_parameters.primes[i]);
+		const uint64_t p(_getPrime(i));
 		if (p < _parameters.maxIncrements) _primeTestStoreOffsetsSize++;
 		else {
 			if (_sparseLimit == 0) _sparseLimit = i & (~1ull);
@@ -458,37 +466,23 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 
 void Miner::_processSieve9(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i) {
         assert(_parameters.primeTupleOffset.size() == 9);
-        uint32_t pending[9] = { 0 };
+	uint32_t pending[PENDING_SIZE];
+	uint64_t pending_pos(0);
+	_initPending(pending);
 
         for (uint64_t i(start_i) ; i < end_i ; i++) {
                 const uint32_t p(_parameters.primes[i]);
                 uint32_t* offset = &offsets[i*9];
-                uint64_t mask = 0x1ff;
                 for (uint64_t f(0) ; f < 9; f++) {
-			if (offset[f] >= _parameters.sieveSize) {
-				offset[f] -= _parameters.sieveSize;
-				mask &= ~(1 << f);
-                        }
-		}
-                while (mask) {
-                        for (uint64_t f(0) ; f < 9; f++) {
-                                if (mask & (1 << f)) {
-                                        __builtin_prefetch(&sieve[offset[f] >> 3]);
-                                        sieve[pending[f] >> 3] |= 1 << (pending[f] & 7);
-                                        pending[f] = offset[f];
-                                        offset[f] += p;
-                                        if (offset[f] >= _parameters.sieveSize) {
-                                                offset[f] -= _parameters.sieveSize;
-                                                mask &= ~(1 << f);
-                                        }
-                                }
-                        }
+			while (offset[f] < _parameters.sieveSize) {
+				_addToPending(sieve, pending, pending_pos, offset[f]);
+				offset[f] += p;
+			}
+			offset[f] -= _parameters.sieveSize;
                 }
         }
 
-        for (uint64_t f(0); f < 9; f++) {
-                sieve[pending[f] >> 3] |= 1 << (pending[f] & 7);
-        }
+	_termPending(sieve, pending);
 }
 
 void Miner::_processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i) {
@@ -694,7 +688,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 	}
 }
 
-bool Miner::_testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_tmp) {
+bool Miner::_testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_tmp, uint32_t height) {
 	uint32_t M[WORK_INDEXES * MAX_N_SIZE], bits(0), N_Size;
 	uint32_t *mp(&M[0]);
 	for (uint32_t i(0); i < WORK_INDEXES; ++i) {
@@ -712,7 +706,7 @@ bool Miner::_testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WO
 		mp += N_Size;
 	}
 
-	fermatTest(N_Size, WORK_INDEXES, M, is_prime, _cpuInfo.hasAVX512());
+	fermatTest(N_Size, WORK_INDEXES, M, is_prime, _cpuInfo.hasAVX512(), [&]() { return height != _currentHeight; });
 	return true;
 }
 
@@ -759,8 +753,8 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 			bool firstTestDone(false);
 			if (_cpuInfo.hasAVX2() && _manager->options().enableAvx2() && job.testWork.n_indexes == WORK_INDEXES) {
 				uint32_t isPrime[WORK_INDEXES];
-				firstTestDone = _testPrimesIspc(job.testWork.indexes, isPrime, z_ploop, z_tmp);
-				if (firstTestDone) {
+				firstTestDone = _testPrimesIspc(job.testWork.indexes, isPrime, z_ploop, z_tmp, _workData[job.workDataIndex].verifyBlock.height);
+				if (_currentHeight == _workData[job.workDataIndex].verifyBlock.height && firstTestDone) {
 					job.testWork.n_indexes = 0;
 					for (uint32_t i(0) ; i < WORK_INDEXES ; i++) {
 						DBG_VERIFY(({
