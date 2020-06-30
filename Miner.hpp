@@ -42,8 +42,8 @@ struct MinerParameters {
 		tupleLengthMin(6),
 		primorialNumber(38), primeTableLimit(2147483648), deepSieve(1UL << 37),
 		solo(true),
-		deep(true),
 		saveRemainders(false),
+		deep(true),
 		sieveWorkers(2),
 		sieveBits(25), sieveSize(1UL << sieveBits), sieveWords(sieveSize/64),
 		deepSieveBits(36), deepSieveSize(1ULL << deepSieveBits), deepSieveWords(deepSieveSize/64),
@@ -53,14 +53,6 @@ struct MinerParameters {
 		primorialOffsets{4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull,
 		                 7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull,
 		                 8145217177ull, 8145220537ull, 8145223897ull, 8145227257ull} {}
-
-		deepSieve        = (1ULL << 37);  // This is the highest prime sieved by the large (deep) sieve.  Can't be bigger than the square of sieve.
-		sieveSize        = 1ULL << sieveBits;
-		deepSieveSize    = 1ULL << deepSieveBits;
-		deepSieveWords   = deepSieveSize/64;
-		maxIncrements    = (1ULL << 30);  // Largely unused, but sieve must be <= this, and it can't be > 2^30  (Limited by processSieve6 and 32-bit offsets, should be possible to raise to 2^32).
-		maxDeep          = (1ULL << 43);  // Limited by primorialNumber.  This is the max k value that will be searched.
-		maxDeepIter      = maxDeep/sieveSize;
 };
 
 struct primeTestWork {
@@ -207,7 +199,6 @@ class Miner {
 	void _deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, uint32_t workDataIndex, uint64_t loop);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
-	void _processSieve9(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _sieveSegments(uint8_t* sieveSegment, uint32_t* offsets, uint64_t loopStart, uint64_t loopEnd);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t offsetId);
 	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp, uint32_t height);

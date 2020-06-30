@@ -54,6 +54,7 @@ void Miner::init() {
 	_parameters.solo = !(_manager->options().mode() == "Pool");
 	_parameters.tupleLengthMin = _manager->options().tupleLengthMin();
 	_parameters.primeTableLimit = _manager->options().primeTableLimit();
+	if (_parameters.deep) _parameters.primeTableLimit = _parameters.maxIncrements;
 	_parameters.primorialNumber  = _manager->options().primorialNumber();
 	_parameters.primeTupleOffset = _manager->options().constellationType();
 	_parameters.saveRemainders = _manager->options().saveRemainders();
@@ -465,27 +466,6 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 	mpz_clear(tar);
 }
 
-void Miner::_processSieve9(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i) {
-        assert(_parameters.primeTupleOffset.size() == 9);
-	uint32_t pending[PENDING_SIZE];
-	uint64_t pending_pos(0);
-	_initPending(pending);
-
-        for (uint64_t i(start_i) ; i < end_i ; i++) {
-                const uint32_t p(_parameters.primes[i]);
-                uint32_t* offset = &offsets[i*9];
-                for (uint64_t f(0) ; f < 9; f++) {
-			while (offset[f] < _parameters.sieveSize) {
-				_addToPending(sieve, pending, pending_pos, offset[f]);
-				offset[f] += p;
-			}
-			offset[f] -= _parameters.sieveSize;
-                }
-        }
-
-	_termPending(sieve, pending);
-}
-
 void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, uint32_t workDataIndex, uint64_t loop) {
 	mpz_t tar, z_p, z_tmp;
 	mpz_init(tar);
@@ -708,8 +688,6 @@ void Miner::_sieveSegments(uint8_t* sieveSegment, uint32_t* offsets, uint64_t lo
 		// Main sieve
 		if (tupleSize == 6)
 			_processSieve6(sieveSegment, offsets, start_i, _sparseLimit);
-		else if (tupleSize == 9)
-			_processSieve9(sieve.sieve, sieve.offsets, start_i, _sparseLimit);
 		else
 			_processSieve(sieveSegment, offsets, start_i, _sparseLimit);
 		
@@ -717,7 +695,7 @@ void Miner::_sieveSegments(uint8_t* sieveSegment, uint32_t* offsets, uint64_t lo
 	}
 }
 
-void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
+void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t offsetId) {
 	std::unique_lock<std::mutex> modLock(sieve.modLock, std::defer_lock);
 
 	memset(sieve.sieve, 0, _parameters.deepSieveSize/8);
@@ -785,7 +763,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex) {
 			w.sieveWork.loop = loop >> (_parameters.deepSieveBits - _parameters.sieveBits);
 			w.sieveWork.sieveId = sieve.id;
 			int nDeepWorkers(0);
-			for (uint64_t p = _parameters.sieve; p < _parameters.deepSieve; p += _parameters.sieveSize << 6) {
+			for (uint64_t p = _parameters.primeTableLimit; p < _parameters.deepSieve; p += _parameters.sieveSize << 6) {
 				w.sieveWork.start_p = p;
 				w.sieveWork.end_p = p + (_parameters.sieveSize << 6);
 				_verifyWorkQueue.push_back(w);

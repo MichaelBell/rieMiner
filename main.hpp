@@ -57,7 +57,7 @@ class Options {
 		_benchmarkDifficulty(1600),
 		_benchmarkTimeLimit(0),
 		_benchmark2tupleCountLimit(50000),
-		_maxIncrements(29),
+		_maxIncrements(30),
 		_primeTableLimit(2147483648),
 		_primorialNumber(38),
 		_primorialOffsets{4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull,
