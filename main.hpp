@@ -1,91 +1,100 @@
-// (c) 2017-2018 Pttn (https://github.com/Pttn/rieMiner)
+// (c) 2017-2020 Pttn and contributors (https://github.com/Pttn/rieMiner)
 
 #ifndef HEADER_main_hpp
 #define HEADER_main_hpp
 
-#define versionString	"rieMiner 0.9RC4a"
-
-#include <unistd.h>
-#include <string>
-#include <array>
-#include <vector>
 #include <algorithm>
-#include <iomanip>
+#include <array>
 #include <chrono>
-#include <thread>
-#include <mutex>
 #include <fstream>
+#include <iomanip>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unistd.h>
+#include <vector>
 #include "tools.hpp"
 
-#define leading0s(x) std::setw(x) << std::setfill('0')
-#define FIXED(x) std::fixed << std::setprecision(x)
-#define FIXED(x) std::fixed << std::setprecision(x)
+#define versionString	"rieMiner 0.91c"
 
 extern int DEBUG;
 #define DBG(x) if (DEBUG) {x;};
 #define DBG_VERIFY(x) if (DEBUG > 1) { x; };
 
 class Options {
-	std::string _host, _user, _pass, _protocol, _address, _cbMsg, _tcFile;
-	uint16_t _debug, _tuples, _sieveBits, _port, _threads, _sieveWorkers;
-	uint32_t _refresh, _testDiff, _testTime, _test2t;
-	uint64_t _sieve, _pn;
-	std::vector<uint64_t> _consType, _pOff;
+	bool _enableAvx2, _saveRemainders;
+	std::string _host, _username, _password, _mode, _payoutAddress, _secret, _tuplesFile;
+	AddressFormat _payoutAddressFormat;
+	uint16_t _debug, _port, _threads, _sieveWorkers, _sieveBits, _refreshInterval, _tupleLengthMin, _donate;
+	uint32_t _benchmarkDifficulty, _benchmarkTimeLimit, _benchmark2tupleCountLimit, _maxIncrements;
+	uint64_t _primeTableLimit, _primorialNumber;
+	std::vector<uint64_t> _primorialOffsets, _constellationType;
 	std::vector<std::string> _rules;
 	
-	void parseLine(std::string, std::string&, std::string&) const;
+	void _parseLine(std::string, std::string&, std::string&) const;
+	void _stopConfig() const;
 	
 	public:
-	Options() { // Default options: Standard Benchmark with 8 threads
-		_debug     = 0;
-		_user      = "";
-		_pass      = "";
-		_host      = "127.0.0.1";
-		_protocol  = "Benchmark";
-		_address   = "RPttnMeDWkzjqqVp62SdG2ExtCor9w54EB";
-		_cbMsg     = "/rieMiner/";
-		_tcFile    = "None";
-		_port      = 28332;
-		_threads   = 8;
-		_sieveWorkers = 0;
-		_sieve     = 2147483648;
-		_tuples    = 6;
-		_refresh   = 30;
-		_testDiff  = 1600;
-		_testTime  = 0;
-		_test2t    = 50000;
-		_pn        = 38; // Primorial Number
-		_pOff      = {4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull, 
-		              7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull,
-		              8145217177ull, 8145220537ull, 8145223897ull, 8145227257ull}; // Primorial Offsets
-		_sieveBits = 25;
-		_consType  = {0, 4, 2, 4, 2, 4}; // What type of constellations are we mining (offsets)
-		_rules     = std::vector<std::string>();
-	}
+	Options() : // Default options: Standard Benchmark with 8 threads
+		_enableAvx2(false),
+		_saveRemainders(false),
+		_host("127.0.0.1"),
+		_username(""),
+		_password(""),
+		_mode("Benchmark"),
+		_payoutAddress("RPttnMeDWkzjqqVp62SdG2ExtCor9w54EB"),
+		_secret("/rM0.91/"),
+		_tuplesFile("None"),
+		_payoutAddressFormat(AddressFormat::P2PKH),
+		_debug(0),
+		_port(28332),
+		_threads(8),
+		_sieveWorkers(0),
+		_sieveBits(25),
+		_refreshInterval(30),
+		_tupleLengthMin(6),
+		_donate(2),
+		_benchmarkDifficulty(1600),
+		_benchmarkTimeLimit(0),
+		_benchmark2tupleCountLimit(50000),
+		_maxIncrements(29),
+		_primeTableLimit(2147483648),
+		_primorialNumber(38),
+		_primorialOffsets{4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull,
+		                  7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull,
+		                  8145217177ull, 8145220537ull, 8145223897ull, 8145227257ull},
+		_constellationType{0, 4, 2, 4, 2, 4}, // What type of constellations are we mining (offsets)
+		_rules{"segwit"} {}
 	
-	void loadConf();
 	void askConf();
+	void loadConf();
 	
+	bool enableAvx2() const {return _enableAvx2;}
+	bool saveRemainders() const {return _saveRemainders;}
+	std::string mode() const {return _mode;}
 	std::string host() const {return _host;}
 	uint16_t port() const {return _port;}
-	std::string user() const {return _user;}
-	std::string pass() const {return _pass;}
-	std::string protocol() const {return _protocol;}
-	std::string address() const {return _address;}
-	std::string cbMsg() const {return _cbMsg;}
-	std::string tcFile() const {return _tcFile;}
+	std::string username() const {return _username;}
+	std::string password() const {return _password;}
+	std::string payoutAddress() const {return _payoutAddress;}
+	AddressFormat payoutAddressFormat() const {return _payoutAddressFormat;}
+	void setPayoutAddress(const std::string&);
+	std::string secret() const {return _secret;}
+	std::string tuplesFile() const {return _tuplesFile;}
 	uint16_t threads() const {return _threads;}
 	uint16_t sieveWorkers() const {return _sieveWorkers;}
-	uint64_t sieve() const {return _sieve;}
-	uint8_t tuples() const {return _tuples;}
-	uint32_t refresh() const {return _refresh;}
-	uint32_t testDiff() const {return _testDiff;}
-	uint32_t testTime() const {return _testTime;}
-	uint32_t test2t() const {return _test2t;}
-	uint64_t pn() const {return _pn;}
-	std::vector<uint64_t> pOff() const {return _pOff;}
-	uint8_t sieveBits() const {return _sieveBits;}
-	std::vector<uint64_t> consType() const {return _consType;}
+	uint64_t primeTableLimit() const {return _primeTableLimit;}
+	uint16_t sieveBits() const {return _sieveBits;}
+	uint32_t refreshInterval() const {return _refreshInterval;}
+	uint16_t tupleLengthMin() const {return _tupleLengthMin;}
+	uint16_t donate() const {return _donate;}
+	uint32_t benchmarkDifficulty() const {return _benchmarkDifficulty;}
+	uint32_t benchmarkTimeLimit() const {return _benchmarkTimeLimit;}
+	uint32_t benchmark2tupleCountLimit() const {return _benchmark2tupleCountLimit;}
+	uint32_t maxIncrements() const {return _maxIncrements;}
+	std::vector<uint64_t> constellationType() const {return _constellationType;}
+	uint64_t primorialNumber() const {return _primorialNumber;}
+	std::vector<uint64_t> primorialOffsets() const {return _primorialOffsets;}
 	std::vector<std::string> rules() const {return _rules;}
 };
 

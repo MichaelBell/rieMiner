@@ -1,29 +1,10 @@
-// (c) 2018 Pttn (https://github.com/Pttn/rieMiner)
+// (c) 2018-2020 Pttn (https://github.com/Pttn/rieMiner)
 
-#include "main.hpp"
 #include "GBTClient.hpp"
+#include "main.hpp"
 #include "WorkManager.hpp"
 
-bool GBTClient::connect() {
-	if (_connected) return false;
-	if (_inited) {
-		if (!getWork()) return false;
-		_gbtd = GetBlockTemplateData();
-		if (!addrToScriptPubKey(_manager->options().address(), _gbtd.scriptPubKey)) {
-			std::cerr << "Invalid payout address! Using donation address instead." << std::endl;
-			addrToScriptPubKey("RPttnMeDWkzjqqVp62SdG2ExtCor9w54EB", _gbtd.scriptPubKey);
-		}
-		_pendingSubmissions = std::vector<std::pair<WorkData, uint8_t>>();
-		_connected = true;
-		return true;
-	}
-	else {
-		std::cout << "Cannot connect because the client was not inited!" << std::endl;
-		return false;
-	}
-}
-
-void GetBlockTemplateData::coinBaseGen(const std::string &cbMsg) {
+void GetBlockTemplateData::coinBaseGen(const AddressFormat &addressFormat, const std::string &cbMsg, uint16_t donationPercent) {
 	coinbase = std::vector<uint8_t>();
 	std::vector<uint8_t> scriptSig;
 	const std::vector<uint8_t> dwc(hexStrToV8(default_witness_commitment)); // for SegWit
@@ -32,64 +13,110 @@ void GetBlockTemplateData::coinBaseGen(const std::string &cbMsg) {
 	// Randomization to avoid 2 threads working on the same problem
 	for (uint32_t i(0) ; i < 4 ; i++) scriptSig.push_back(rand(0x00, 0xFF));
 	
-	// Version [0 -> 3] (01000000)
+	// Version (01000000)
+	coinbase.push_back(0x01); coinbase.push_back(0x00); coinbase.push_back(0x00); coinbase.push_back(0x00);
+	
+	if (dwc.size() > 0) {
+		coinbase.push_back(0x00); // Marker
+		coinbase.push_back(0x01); // Flag
+	}
+	
+	// Input Count (01)
 	coinbase.push_back(1);
-	coinbase.push_back(0); coinbase.push_back(0); coinbase.push_back(0);
-	// Input Count [4] (01)
-	coinbase.push_back(1);
-	// 0000000000000000000000000000000000000000000000000000000000000000 (Input TXID [5 -> 36])
+	// 0000000000000000000000000000000000000000000000000000000000000000 (Input TXID)
 	for (uint32_t i(0) ; i < 32 ; i++) coinbase.push_back(0);
-	// Input VOUT [37 -> 40] (FFFFFFFF)
+	// Input VOUT (FFFFFFFF)
 	for (uint32_t i(0) ; i < 4 ; i++) coinbase.push_back(0xFF);
-	// ScriptSig Size [41]
+	// ScriptSig Size
 	coinbase.push_back(4 + scriptSig.size()); // Block Height Push (4) + scriptSig.size()
-	// Block Height Length [42]
+	// Block Height Length
 	if (height/65536 == 0) {
 		if (height/256 == 0) coinbase.push_back(1);
 		else coinbase.push_back(2);
 	}
 	else coinbase.push_back(3);
-	// Block Height [43 -> 45]
+	// Block Height
 	coinbase.push_back(height % 256);
 	coinbase.push_back((height/256) % 256);
 	coinbase.push_back((height/65536) % 256);
-	// ScriptSig [46 -> 46 + scriptSig.size() = s]
+	// ScriptSig
 	for (uint32_t i(0) ; i < scriptSig.size() ; i++) coinbase.push_back(scriptSig[i]);
-	// Input Sequence [s -> s + 3] (FFFFFFFF)
+	// Input Sequence (FFFFFFFF)
 	for (uint32_t i(0) ; i < 4 ; i++) coinbase.push_back(0xFF);
 	
-	// Output Count [s + 4]
-	coinbase.push_back(1);
+	std::vector<uint8_t> scriptPubKeyDon(hexStrToV8("a0524c3936b8cb020dd1debadd81353d5577b79a"));
+	uint64_t donation(donationPercent*coinbasevalue/100);
+	if (scriptPubKey == scriptPubKeyDon) donation = 0;
+	uint64_t reward(coinbasevalue - donation);
+	// Output Count
+	if (donation == 0) coinbase.push_back(1);
+	else coinbase.push_back(2);
 	if (dwc.size() > 0) coinbase[coinbase.size() - 1]++; // Dummy Output for SegWit if needed
-	// Output Value [s + 5 -> s + 12]
-	uint64_t reward(coinbasevalue);
+	// Output Value
 	for (uint32_t i(0) ; i < 8 ; i++) {
 		coinbase.push_back(reward % 256);
 		reward /= 256;
 	}
 	
-	coinbase.push_back(25); // Output Length [s + 13]
-	coinbase.push_back(0x76); // OP_DUP [s + 14]
-	coinbase.push_back(0xA9); // OP_HASH160 [s + 15]
-	coinbase.push_back(0x14); // Bytes Pushed on Stack [s + 16]
-	// ScriptPubKey (for payout address) [s + 17 -> s + 36]
-	for (uint32_t i(0) ; i < 20 ; i++) coinbase.push_back(scriptPubKey[i]);
-	coinbase.push_back(0x88); // OP_EQUALVERIFY [s + 37]
-	coinbase.push_back(0xAC); // OP_CHECKSIG [s + 38]
+	if (addressFormat == AddressFormat::P2SH) {
+		coinbase.push_back(scriptPubKey.size() + 3); // Output Length
+		coinbase.push_back(0xA9); // OP_HASH160
+		coinbase.push_back(0x14); // Bytes Pushed on Stack
+	}
+	else if (addressFormat == AddressFormat::BECH32) {
+		coinbase.push_back(scriptPubKey.size() + 2); // Output Length
+		coinbase.push_back(0x00); // OP_0
+		coinbase.push_back(scriptPubKey.size()); // Script Length
+	}
+	else {
+		coinbase.push_back(scriptPubKey.size() + 5); // Output Length
+		coinbase.push_back(0x76); // OP_DUP
+		coinbase.push_back(0xA9); // OP_HASH160
+		coinbase.push_back(0x14); // Bytes Pushed on Stack
+	}
+	// ScriptPubKey (for payout address)
+	for (uint32_t i(0) ; i < scriptPubKey.size() ; i++) coinbase.push_back(scriptPubKey[i]);
+	if (addressFormat == AddressFormat::P2SH)
+		coinbase.push_back(0x87); // OP_EQUAL
+	else if (addressFormat == AddressFormat::P2PKH) {
+		coinbase.push_back(0x88); // OP_EQUALVERIFY
+		coinbase.push_back(0xAC); // OP_CHECKSIG
+	}
 	
-	// Default witness commitment for SegWit if applicable, contained in another output
+	// Donation output
+	if (donation != 0) {
+		// Output Value
+		for (uint32_t i(0) ; i < 8 ; i++) {
+			coinbase.push_back(donation % 256);
+			donation /= 256;
+		}
+		coinbase.push_back(25);
+		coinbase.push_back(0x76);
+		coinbase.push_back(0xA9);
+		coinbase.push_back(0x14);
+		for (uint32_t i(0) ; i < 20 ; i++) coinbase.push_back(scriptPubKeyDon[i]);
+		coinbase.push_back(0x88);
+		coinbase.push_back(0xAC);
+	}
+	
+	// SegWit specifics (dummy output, witness)
 	if (dwc.size() > 0) {
 		for (uint32_t i(0) ; i < 8 ; i++) coinbase.push_back(0x00); // No reward
 		coinbase.push_back(dwc.size()); // Output Length
 		// default_witness_commitment from GetBlockTemplate
 		for (uint32_t i(0) ; i < dwc.size() ; i++) coinbase.push_back(dwc[i]);
+		
+		coinbase.push_back(1); // Number of Witnesses/stack items
+		coinbase.push_back(32); // Witness Length
+		// Witness of the Coinbase Input
+		for (uint32_t i(0) ; i < 32 ; i++) coinbase.push_back(0x00);
 	}
 	
 	// Lock Time (00000000)
 	for (uint32_t i(0) ; i < 4 ; i++) coinbase.push_back(0);
 }
 
-bool GBTClient::getWork() {
+bool GBTClient::_getWork() {
 	const std::vector<std::string> rules(_manager->options().rules());
 	std::string req;
 	if (rules.size() == 0) req = "{\"method\": \"getblocktemplate\", \"params\": [], \"id\": 0}\n";
@@ -111,7 +138,10 @@ bool GBTClient::getWork() {
 	       *jsonGbt_Res_Dwc(json_object_get(jsonGbt_Res, "default_witness_commitment"));
 	
 	// Failure to GetBlockTemplate
-	if (jsonGbt == NULL || jsonGbt_Res == NULL || jsonGbt_Res_Txs == NULL) return false;
+	if (jsonGbt == NULL || jsonGbt_Res == NULL || jsonGbt_Res_Txs == NULL) {
+		_gbtd = GetBlockTemplateData();
+		return false;
+	}
 	
 	const uint32_t oldHeight(_gbtd.height);
 	uint8_t bitsTmp[4];
@@ -137,47 +167,67 @@ bool GBTClient::getWork() {
 	
 	_gbtd.transactions += binToHexStr(_gbtd.coinbase.data(), _gbtd.coinbase.size());
 	for (uint32_t i(0) ; i < json_array_size(jsonGbt_Res_Txs) ; i++) {
-		std::array<uint8_t, 32> txHash;
-		uint8_t txHashInv[32];
-		if (_gbtd.segwitActive())
-			hexStrToBin(json_string_value(json_object_get(json_array_get(jsonGbt_Res_Txs, i), "txid")), txHashInv);
+		std::vector<uint8_t> txHash;
+		if (_gbtd.isActive("segwit"))
+			txHash = reverse(hexStrToV8(json_string_value(json_object_get(json_array_get(jsonGbt_Res_Txs, i), "txid"))));
 		else
-			hexStrToBin(json_string_value(json_object_get(json_array_get(jsonGbt_Res_Txs, i), "hash")), txHashInv);
-		for (uint8_t j(0) ; j < 32 ; j++) txHash[j] = txHashInv[31 - j];
+			txHash = reverse(hexStrToV8(json_string_value(json_object_get(json_array_get(jsonGbt_Res_Txs, i), "hash"))));
 		_gbtd.transactions += json_string_value(json_object_get(json_array_get(jsonGbt_Res_Txs, i), "data"));
-		_gbtd.txHashes.push_back(txHash);
+		_gbtd.txHashes.push_back(v8ToA8(txHash));
 	}
 	
 	// Notify when the network found a block
-	if (oldHeight != _gbtd.height) _manager->updateHeight(_gbtd.height - 1);
+	const uint64_t difficulty(getCompact(invEnd32(_gbtd.bh.bits)));
+	if (_manager->difficulty() != difficulty) _manager->updateDifficulty(difficulty, _gbtd.height);
+	if (oldHeight != _gbtd.height && oldHeight != 0) _manager->newHeightMessage(_gbtd.height);
 	
 	json_decref(jsonGbt);
 	
 	return true;
 }
 
-void GBTClient::sendWork(const std::pair<WorkData, uint8_t>& share) const {
-	const WorkData wdToSend(share.first);
+bool GBTClient::connect() {
+	if (_connected) return false;
+	if (_inited) {
+		if (!_getWork()) return false;
+		_gbtd = GetBlockTemplateData();
+		if (addrToScriptPubKey(_manager->options().payoutAddress(), _gbtd.scriptPubKey, false));
+		else if (bech32ToScriptPubKey(_manager->options().payoutAddress(), _gbtd.scriptPubKey, false));
+		else {
+			std::cerr << "Invalid payout address! Using donation address instead." << std::endl;
+			addrToScriptPubKey("RPttnMeDWkzjqqVp62SdG2ExtCor9w54EB", _gbtd.scriptPubKey);
+		}
+		_pendingSubmissions = std::vector<WorkData>();
+		_connected = true;
+		return true;
+	}
+	else {
+		std::cout << "Cannot connect because the client was not inited!" << std::endl;
+		return false;
+	}
+}
+
+void GBTClient::sendWork(const WorkData &work) const {
 	std::ostringstream oss;
 	std::string req;
 	
-	oss << "{\"method\": \"submitblock\", \"params\": [\"" << binToHexStr(&wdToSend.bh, (32 + 256 + 256 + 32 + 64 + 256)/8);
+	oss << "{\"method\": \"submitblock\", \"params\": [\"" << binToHexStr(&work.bh, 112);
 	// Using the Variable Length Integer format
-	if (wdToSend.txCount < 0xFD)
-		oss << binToHexStr((uint8_t*) &wdToSend.txCount, 1);
+	if (work.txCount < 0xFD)
+		oss << binToHexStr((uint8_t*) &work.txCount, 1);
 	else // Having more than 65535 transactions is currently impossible
-		oss << "fd" << binToHexStr((uint8_t*) &wdToSend.txCount, 2);
-	oss << wdToSend.transactions << "\"], \"id\": 0}\n";
+		oss << "fd" << binToHexStr((uint8_t*) &work.txCount, 2);
+	oss << work.transactions << "\"], \"id\": 0}\n";
 	req = oss.str();
 	
-	const uint16_t k(share.second);
 	_manager->printTime();
-	std::cout << " " << k << "-tuple found";
+	std::cout << " " << work.primes << "-tuple found";
 	json_t *jsonSb(sendRPCCall(req)); // SubmitBlock response
-	if (k < _gbtd.primes) std::cout << std::endl;
+	if (work.primes < _gbtd.primes) std::cout << std::endl;
 	else {
 		std::cout << ", this is a block!" << std::endl;
-		std::cout << "Sent: " << req;
+		std::cout << "Base prime: " << work.bh.decodeSolution() << std::endl;
+		DBG(std::cout << "Sent: " << req;);
 		if (jsonSb == NULL) std::cerr << "Failure submiting block :|" << std::endl;
 		else {
 			json_t *jsonSb_Res(json_object_get(jsonSb, "result")),
@@ -191,14 +241,14 @@ void GBTClient::sendWork(const std::pair<WorkData, uint8_t>& share) const {
 
 WorkData GBTClient::workData() const {
 	GetBlockTemplateData gbtd(_gbtd);
-	gbtd.coinBaseGen(_manager->options().cbMsg());
+	gbtd.coinBaseGen(_manager->options().payoutAddressFormat(), _manager->options().secret(), _manager->options().donate());
 	gbtd.transactions = binToHexStr(gbtd.coinbase.data(), gbtd.coinbase.size()) + gbtd.transactions;
 	gbtd.txHashes.insert(gbtd.txHashes.begin(), gbtd.coinBaseHash());
 	gbtd.merkleRootGen();
 	
 	WorkData wd;
 	memcpy(&wd.bh, &gbtd.bh, 128);
-	if (gbtd.height != 0) wd.height = gbtd.height - 1;
+	wd.height = gbtd.height;
 	wd.bh.bits       = invEnd32(wd.bh.bits);
 	wd.targetCompact = getCompact(wd.bh.bits);
 	wd.transactions  = gbtd.transactions;

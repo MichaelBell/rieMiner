@@ -1,23 +1,39 @@
-// (c) 2018 Pttn (https://github.com/Pttn/rieMiner)
+// (c) 2018-2019 Pttn (https://github.com/Pttn/rieMiner)
 // (c) 2018 Michael Bell/Rockhawk (CPUID tools)
 
 #ifndef HEADER_tools_hpp
 #define HEADER_tools_hpp
 
-#include <iostream>
-#include <cstdio>
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <sstream>
-#include <iomanip>
 #include <array>
-#include <vector>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <iomanip>
+#include <iostream>
 #include <openssl/sha.h>
 #include <random>
-#include <gmpxx.h>
+#include <sstream>
+#include <string>
+#include <vector>
 #include <cpuid.h>
+#include <gmpxx.h>
+
+#define leading0s(x) std::setw(x) << std::setfill('0')
+#define FIXED(x) std::fixed << std::setprecision(x)
+
+enum AddressFormat {INVALID, P2PKH, P2SH, BECH32};
+
+uint8_t rand(uint8_t, uint8_t);
+
+std::array<uint8_t, 32> v8ToA8(std::vector<uint8_t>);
+std::vector<uint8_t> a8ToV8(std::array<uint8_t, 32>);
+
+inline std::vector<uint8_t> reverse(const std::vector<uint8_t> &v0) {
+	std::vector<uint8_t> v;
+	for (uint8_t i(0) ; i < v0.size() ; i++) v.push_back(v0[v0.size() - i - 1]);
+	return v;
+}
 
 inline std::string v8ToHexStr(const std::vector<uint8_t> &v) {
 	std::ostringstream oss;
@@ -44,12 +60,14 @@ inline uint32_t getCompact(uint32_t nCompact) {
 	else return nWord << 8*(nSize - 3); // warning: this has problems if difficulty (uncompacted) ever goes past the 2^32 boundary
 }
 
+// Get address type (P2PKH, P2SH, Bech32), no proper support for Bech32 currently
+AddressFormat addressFormatOf(const std::string&);
 // Convert address to ScriptPubKey used for building the Coinbase Transaction
-bool addrToScriptPubKey(const std::string&, std::vector<uint8_t>&);
+bool addrToScriptPubKey(const std::string&, std::vector<uint8_t>&, bool = true);
+bool bech32ToScriptPubKey(const std::string&, std::vector<uint8_t>&, bool = true);
 // Calculate Merkle Root from a list of transactions
 std::array<uint8_t, 32> calculateMerkleRoot(const std::vector<std::array<uint8_t, 32>>&);
 std::array<uint8_t, 32> calculateMerkleRootStratum(const std::vector<std::array<uint8_t, 32>>&);
-uint8_t rand(uint8_t, uint8_t);
 
 inline double timeSince(const std::chrono::time_point<std::chrono::system_clock> &t0) {
 	const std::chrono::time_point<std::chrono::system_clock> t(std::chrono::system_clock::now());
@@ -85,15 +103,12 @@ inline uint32_t toBEnd32(uint32_t n) {
 }
 
 class CpuID {
-	bool _avx, _avx2, _avx512, _intel;
-	
+	bool _avx, _avx2, _avx512;
 public:
 	CpuID();
-	
 	bool hasAVX() const {return _avx;}
 	bool hasAVX2() const {return _avx2;}
 	bool hasAVX512() const {return _avx512;}
-	bool isIntel() const {return _intel;}
 };
 
 #endif
