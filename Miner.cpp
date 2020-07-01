@@ -505,7 +505,10 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 	uint32_t pending[PENDING_SIZE];
 	uint64_t pending64[PENDING_SIZE];
 	uint64_t indexOffset = loop << _parameters.deepSieveBits;
+	std::chrono::microseconds primeSieveTime(0);
+	const auto overallStartTime(std::chrono::high_resolution_clock::now());
 	for (uint64_t j(start_p); j < end_p; j += _parameters.sieveSize*2) {
+		const auto startTime(std::chrono::high_resolution_clock::now());
 		memset(dsPrimeSieve, 0, _parameters.sieveSize/8);
 
 		uint64_t pending_pos(0);
@@ -539,6 +542,7 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		}
 
 		_termPending(dsPrimeSieve, pending);
+		primeSieveTime += std::chrono::duration_cast<decltype(primeSieveTime)>(std::chrono::high_resolution_clock::now() - startTime);
 
 		pending_pos = 0;
 		_initPending64(pending64);
@@ -590,6 +594,8 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		}
 		_termPending64(sieve.sieve, pending64);
 	}
+
+	DBG(std::cout << "Time sieving for primes: " << primeSieveTime.count() << " of " << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - overallStartTime).count() << std::endl;);		
 
 	mpz_clear(tar);
 	mpz_clear(z_p);
@@ -759,6 +765,12 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 			
 			sieveSegment = sieve.sieve;
 
+			uint64_t remainingCandidates[2];
+			const auto startTime(std::chrono::high_resolution_clock::now());
+			remainingCandidates[0] = _countRemaining(sieve);
+			remainingCandidates[1] = remainingCandidates[0];
+			uint32_t lastIdx = 0;
+
 			w.type = TYPE_SIEVE_DEEP;
 			w.sieveWork.loop = loop >> (_parameters.deepSieveBits - _parameters.sieveBits);
 			w.sieveWork.sieveId = sieve.id;
@@ -773,6 +785,16 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 			while (nDeepWorkers > 0) {
 				sieve.deepDoneQueue.pop_front();
 				nDeepWorkers--;
+
+				uint32_t timeSinceStart = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::high_resolution_clock::now() - startTime).count() / 60;
+				uint32_t idx = timeSinceStart & 1;
+				if (lastIdx != idx) {
+					remainingCandidates[idx] = _countRemaining(sieve);
+					DBG(std::cout << "Remaining candidates: " << remainingCandidates[idx] << std::endl;);
+					uint32_t candsPerMin = remainingCandidates[idx ^ 1] - remainingCandidates[idx];
+					std::cout << "Deep sieve removing ~" << candsPerMin << " candidates per minute" << std::endl;
+					lastIdx = idx;
+				}
 			}
 
 			DBG(std::cout << "Read deep sieve" << std::endl);

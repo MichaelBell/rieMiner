@@ -211,6 +211,15 @@ class Miner {
 		else return _parameters.primesHi[i - _nLoPrimes]; 
 	}
 
+	uint64_t _countRemaining(const SieveInstance& sieve) const {
+		uint64_t countRemaining = 0;
+		uint32_t* sieveAsInt = (uint32_t*)sieve.sieve;
+		for(uint64_t i = 0; i < (_parameters.deepSieveSize >> 5); ++i) {
+			countRemaining += 32 - __builtin_popcount(sieveAsInt[i]);
+		}
+		return countRemaining;
+	}
+
 	public:
 	Miner(const std::shared_ptr<WorkManager> &manager) {
 		_manager = manager;
