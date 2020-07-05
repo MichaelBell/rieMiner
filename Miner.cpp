@@ -47,17 +47,26 @@ void Miner::init() {
 	else std::cout << " AVX not suppported!";
 	std::cout << std::endl;
 	_parameters.maxIncrements = 1UL << _manager->options().maxIncrements();
+	if (_parameters.deep) {
+		_parameters.maxDeep = _parameters.maxIncrements;
+		_parameters.maxIncrements = 1UL << 30;
+	}
 	_parameters.sieveBits = _manager->options().sieveBits();
 	_parameters.sieveSize = 1 << _parameters.sieveBits;
 	_parameters.sieveWords = _parameters.sieveSize/64;
+	_parameters.deepSieveBits = _manager->options().deepSieveBits();
+	_parameters.deepSieveSize = 1UL << _parameters.deepSieveBits;
+	_parameters.deepSieveWords = _parameters.deepSieveSize/64;
 	_parameters.maxIter = _parameters.maxIncrements/_parameters.sieveSize;
 	_parameters.solo = !(_manager->options().mode() == "Pool");
 	_parameters.tupleLengthMin = _manager->options().tupleLengthMin();
 	_parameters.primeTableLimit = _manager->options().primeTableLimit();
+	_parameters.deepPrimeLimit = 1UL << _manager->options().deepPrimeLimitBits();
 	if (_parameters.deep) _parameters.primeTableLimit = _parameters.maxIncrements;
 	_parameters.primorialNumber  = _manager->options().primorialNumber();
 	_parameters.primeTupleOffset = _manager->options().constellationType();
 	_parameters.saveRemainders = _manager->options().saveRemainders();
+	_parameters.maxDeepIter = _parameters.maxDeep/_parameters.sieveSize;
 	
 	// Empirical formula, should work well in most cases for 6-tuples.
 	if (_manager->options().constellationType().size() == 6) {
@@ -547,7 +556,7 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		pending_pos = 0;
 		_initPending64(pending64);
 
-		for (uint64_t b(0); b < _parameters.sieveWords && (b*128+1+j) < _parameters.deepSieve; b++) {
+		for (uint64_t b(0); b < _parameters.sieveWords && (b*128+1+j) < _parameters.deepPrimeLimit; b++) {
 			uint64_t sb(~sieve64[b]);
 
 			while (sb != 0) {
@@ -595,7 +604,7 @@ void Miner::_deepSieve(SieveInstance& sieve, uint64_t start_p, uint64_t end_p, u
 		_termPending64(sieve.sieve, pending64);
 	}
 
-	DBG(std::cout << "Time sieving for primes: " << primeSieveTime.count() << " of " << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - overallStartTime).count() << std::endl;);		
+	//DBG(std::cout << "Time sieving for primes: " << primeSieveTime.count() << " of " << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - overallStartTime).count() << std::endl;);		
 
 	mpz_clear(tar);
 	mpz_clear(z_p);
@@ -711,6 +720,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 	w.workDataIndex = workDataIndex;
 
 	for (uint64_t loop(0) ; loop < _parameters.maxDeepIter ; loop++) {
+		DBG(std::cout << "Start loop " << loop << std::endl;);
 		if (_workData[workDataIndex].verifyBlock.height != _currentHeight)
 			break;
 
@@ -775,7 +785,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 			w.sieveWork.loop = loop >> (_parameters.deepSieveBits - _parameters.sieveBits);
 			w.sieveWork.sieveId = sieve.id;
 			int nDeepWorkers(0);
-			for (uint64_t p = _parameters.primeTableLimit; p < _parameters.deepSieve; p += _parameters.sieveSize << 6) {
+			for (uint64_t p = _parameters.primeTableLimit; p < _parameters.deepPrimeLimit; p += _parameters.sieveSize << 6) {
 				w.sieveWork.start_p = p;
 				w.sieveWork.end_p = p + (_parameters.sieveSize << 6);
 				_verifyWorkQueue.push_back(w);

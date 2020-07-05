@@ -28,7 +28,7 @@ enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_SIEVE_SEGMENT, TYPE_SIEVE_D
 struct MinerParameters {
 	int16_t threads;
 	uint8_t tupleLengthMin;
-	uint64_t primorialNumber, primeTableLimit, deepSieve;
+	uint64_t primorialNumber, primeTableLimit, deepPrimeLimit;
 	bool solo;
 	bool saveRemainders;
 	bool deep;
@@ -40,15 +40,15 @@ struct MinerParameters {
 	MinerParameters() :
 		threads(8),
 		tupleLengthMin(6),
-		primorialNumber(38), primeTableLimit(2147483648), deepSieve(1UL << 37),
+		primorialNumber(38), primeTableLimit(2147483648), deepPrimeLimit(1UL << 37),
 		solo(true),
 		saveRemainders(false),
 		deep(true),
 		sieveWorkers(2),
 		sieveBits(25), sieveSize(1UL << sieveBits), sieveWords(sieveSize/64),
-		deepSieveBits(36), deepSieveSize(1ULL << deepSieveBits), deepSieveWords(deepSieveSize/64),
+		deepSieveBits(32), deepSieveSize(1ULL << deepSieveBits), deepSieveWords(deepSieveSize/64),
 		maxIncrements(1ULL << 30), maxIter(maxIncrements/sieveSize),
-		maxDeep(1ULL << 43), maxDeepIter(maxDeep/sieveSize),
+		maxDeep(1ULL << 34), maxDeepIter(maxDeep/sieveSize),
 		primeTupleOffset{0, 4, 2, 4, 2, 4},
 		primorialOffsets{4209995887ull, 4209999247ull, 4210002607ull, 4210005967ull,
 		                 7452755407ull, 7452758767ull, 7452762127ull, 7452765487ull,

@@ -203,6 +203,14 @@ void Options::loadConf() {
 					try {_sieveBits = std::stoi(value);}
 					catch (...) {_sieveBits = 25;}
 				}
+				else if (key == "DeepSieveBits") {
+					try {_deepSieveBits = std::stoi(value);}
+					catch (...) {_deepSieveBits = 36;}
+				}
+				else if (key == "DeepPrimeLimitBits") {
+					try {_deepPrimeLimitBits = std::stoi(value);}
+					catch (...) {_deepPrimeLimitBits = 37;}
+				}
 				else if (key == "RefreshInterval") {
 					try {_refreshInterval = std::stoi(value);}
 					catch (...) {_refreshInterval = 10;}

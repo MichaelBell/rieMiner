@@ -25,7 +25,7 @@ class Options {
 	bool _enableAvx2, _saveRemainders;
 	std::string _host, _username, _password, _mode, _payoutAddress, _secret, _tuplesFile;
 	AddressFormat _payoutAddressFormat;
-	uint16_t _debug, _port, _threads, _sieveWorkers, _sieveBits, _refreshInterval, _tupleLengthMin, _donate;
+	uint16_t _debug, _port, _threads, _sieveWorkers, _sieveBits, _deepSieveBits, _refreshInterval, _tupleLengthMin, _donate, _deepPrimeLimitBits;
 	uint32_t _benchmarkDifficulty, _benchmarkTimeLimit, _benchmark2tupleCountLimit, _maxIncrements;
 	uint64_t _primeTableLimit, _primorialNumber;
 	std::vector<uint64_t> _primorialOffsets, _constellationType;
@@ -51,9 +51,11 @@ class Options {
 		_threads(8),
 		_sieveWorkers(0),
 		_sieveBits(25),
+		_deepSieveBits(36),
 		_refreshInterval(30),
 		_tupleLengthMin(6),
 		_donate(2),
+		_deepPrimeLimitBits(37),
 		_benchmarkDifficulty(1600),
 		_benchmarkTimeLimit(0),
 		_benchmark2tupleCountLimit(50000),
@@ -84,7 +86,9 @@ class Options {
 	uint16_t threads() const {return _threads;}
 	uint16_t sieveWorkers() const {return _sieveWorkers;}
 	uint64_t primeTableLimit() const {return _primeTableLimit;}
+	uint64_t deepPrimeLimitBits() const {return _deepPrimeLimitBits;}
 	uint16_t sieveBits() const {return _sieveBits;}
+	uint16_t deepSieveBits() const {return _deepSieveBits;}
 	uint32_t refreshInterval() const {return _refreshInterval;}
 	uint16_t tupleLengthMin() const {return _tupleLengthMin;}
 	uint16_t donate() const {return _donate;}
