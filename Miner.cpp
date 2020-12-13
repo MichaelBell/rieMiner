@@ -5,8 +5,7 @@
 // TODO: always use the GMP's C++ interface (mpz_class instead of mpz_t, etc.)
 
 #include "external/gmp_util.h"
-#include "ispc/fermat.h"
-#include "opencl/primetest.h"
+#include "cuda/primetest.h"
 #include "Miner.hpp"
 
 thread_local bool isMaster(false);
@@ -17,13 +16,6 @@ thread_local uint64_t** offsetCount(NULL);
 #define MAX_SIEVE_WORKERS 16
 #define NUM_PRIMES_TO_2P32 203280222
 #define	zeroesBeforeHashInPrime	8
-
-extern "C" {
-	void rie_mod_1s_4p_cps(uint64_t *cps, uint64_t p);
-	mp_limb_t rie_mod_1s_4p(mp_srcptr ap, mp_size_t n, uint64_t ps, uint64_t cnt, uint64_t* cps);
-	mp_limb_t rie_mod_1s_2p_4times(mp_srcptr ap, mp_size_t n, uint32_t* ps, uint32_t cnt, uint64_t* cps, uint64_t* remainders);
-	mp_limb_t rie_mod_1s_2p_8times(mp_srcptr ap, mp_size_t n, uint32_t* ps, uint32_t cnt, uint64_t* cps, uint64_t* remainders);
-}
 
 void Miner::init() {
 	_parameters.threads = _manager->options().threads();
@@ -123,7 +115,6 @@ void Miner::init() {
 	std::cout << "Precomputing division data..." << std::endl;
 	_parameters.inverts.resize(_nLoPrimes);
 	_parameters.invertsHi.resize(_parameters.primesHi.size());
-	_parameters.modPrecompute.resize(precompPrimes);
 	
 	_startingPrimeIndex = _parameters.primorialNumber;
 	const uint64_t blockSize((_nPrimes - _startingPrimeIndex + _parameters.threads - 1)/_parameters.threads);
@@ -139,15 +130,12 @@ void Miner::init() {
 					mpz_set_ui(z_p, _parameters.primes[i]);
 					mpz_invert(z_tmp, _primorial, z_p);
 					_parameters.inverts[i] = mpz_get_ui(z_tmp);
-					rie_mod_1s_4p_cps(&_parameters.modPrecompute[i], _parameters.primes[i]);
 				}
 				else {
 					uint64_t hiIdx = i - _nLoPrimes;
 					mpz_set_ui(z_p, _parameters.primesHi[hiIdx]);
 					mpz_invert(z_tmp, _primorial, z_p);
 					_parameters.invertsHi[hiIdx] = mpz_get_ui(z_tmp);
-					if (i < precompPrimes)
-						rie_mod_1s_4p_cps(&_parameters.modPrecompute[i], _parameters.primesHi[hiIdx]);
 				}
 			}
 			mpz_clear(z_p);
@@ -306,59 +294,11 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 		}
 		else {
 			// Compute the index, using precomputation speed up if available.
-			if (i < precompLimit) {
-				bool haveRemainder(false);
-				if (nextRemainderIdx < avxWidth) {
-					index = nextRemainder[nextRemainderIdx++];
-					cnt = __builtin_clzll(p);
-					ps = p << cnt;
-					haveRemainder = true;
-				}
-				else if (i < avxLimit) {
-					cnt = __builtin_clz((uint32_t) p);
-					if (__builtin_clz(_parameters.primes[i + avxWidth - 1]) == cnt) {
-						uint32_t ps32[8];
-						for (uint64_t j(0) ; j < avxWidth; j++) {
-							ps32[j] = _parameters.primes[i + j] << cnt;
-							nextRemainder[j] = _parameters.inverts[i + j];
-						}
-						if (_cpuInfo.hasAVX2()) rie_mod_1s_2p_8times(tar->_mp_d, tar->_mp_size, &ps32[0], cnt, &_parameters.modPrecompute[i], &nextRemainder[0]);
-						else rie_mod_1s_2p_4times(tar->_mp_d, tar->_mp_size, &ps32[0], cnt, &_parameters.modPrecompute[i], &nextRemainder[0]);
-						haveRemainder = true;
-						index = nextRemainder[0];
-						nextRemainderIdx = 1;
-						cnt += 32;
-						ps = (uint64_t) ps32[0] << 32;
-					}
-				}
-			
-				if (!haveRemainder) {
-					cnt = __builtin_clzll(p);
-					ps = p << cnt;
-					const uint64_t remainder(rie_mod_1s_4p(tar->_mp_d, tar->_mp_size, ps, cnt, &_parameters.modPrecompute[i]));
-					DBG_VERIFY(if (remainder >> cnt != mpz_tdiv_ui(tar, p)) {std::cerr << "Remainder check fail " << (remainder >> cnt) << " != " << mpz_tdiv_ui(tar, p) << std::endl; abort();});
-
-					const uint64_t pa(ps - remainder);
-					uint64_t r, nh, nl;
-					umul_ppmm(nh, nl, pa, invert[0]);
-					udiv_rnnd_preinv(r, nh, nl, ps, _parameters.modPrecompute[i]);
-					index = r >> cnt;
-					DBG_VERIFY(if (p < 0x100000000ull && (r >> cnt) != ((pa >> cnt)*invert[0]) % p) {std::cerr << "Remainder check fail" << std::endl; abort();});
-				}
-				DBG_VERIFY(({
-					const uint64_t remainder(mpz_tdiv_ui(tar, p)), pa(p - remainder);
-					uint64_t q, nh, nl, indexCheck;
-					umul_ppmm(nh, nl, pa, invert[0]);
-					udiv_qrnnd(q, indexCheck, nh, nl, p);
-					if (index != indexCheck) {std::cerr << "Index check fail, p = " << p << ", i = " << i << ", start_i = " << start_i << std::endl; abort();}
-				}));
-			}
-			else {
-				const uint64_t remainder(mpz_tdiv_ui(tar, p)), pa(p - remainder);
-				uint64_t q, nh, nl;
-				umul_ppmm(nh, nl, pa, invert[0]);
-				udiv_qrnnd(q, index, nh, nl, p);
-			}
+			const uint64_t remainder(mpz_tdiv_ui(tar, p)), pa(p - remainder);
+			uint64_t q, nh, nl;
+			//umul_ppmm(nh, nl, pa, invert[0]);
+			//udiv_qrnnd(q, index, nh, nl, p);
+			index = (pa * invert[0]) % p;
 		}
 
 		if (remainderIdx == 0 && _parameters.saveRemainders) {
@@ -411,18 +351,11 @@ void Miner::_updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t
 
 		uint64_t r;
 #define recomputeRemainder(diff) { \
-			if (i < precompLimit && diff < p) { \
-				uint64_t nh, nl; \
-				uint64_t os(diff << cnt); \
-				umul_ppmm(nh, nl, os, invert[0]); \
-				udiv_rnnd_preinv(r, nh, nl, ps, _parameters.modPrecompute[i]); \
-				r >>= cnt; \
-				/* if (r != (diff*invert[0]) % p) {  printf("Remainder check fail\n"); exit(-1); } */ \
-			} \
-			else { \
+			{ \
 				uint64_t q, nh, nl; \
-				umul_ppmm(nh, nl, diff, invert[0]); \
-				udiv_qrnnd(q, r, nh, nl, p); \
+				/*umul_ppmm(nh, nl, diff, invert[0]);*/ \
+				/*udiv_qrnnd(q, r, nh, nl, p);*/ \
+				r = (diff * invert[0]) % p; \
 			} \
 		}
 
@@ -505,57 +438,6 @@ void Miner::_processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, u
 	_termPending(sieve, pending);
 }
 
-void Miner::_processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i) {
-	assert(_parameters.primeTupleOffset.size() == 6);
-	uint32_t pending[PENDING_SIZE];
-	uint64_t pending_pos(0);
-	_initPending(pending);
-
-	xmmreg_t offsetmax;
-	offsetmax.m128 = _mm_set1_epi32(_parameters.sieveSize);
-	
-	assert((start_i & 1) == 0);
-	assert((end_i & 1) == 0);
-
-	for (uint64_t i(start_i) ; i < end_i ; i += 2) {
-		xmmreg_t p1, p2, p3;
-		xmmreg_t offset1, offset2, offset3, nextIncr1, nextIncr2, nextIncr3;
-		xmmreg_t cmpres1, cmpres2, cmpres3;
-		p1.m128 = _mm_set1_epi32(_parameters.primes[i]);
-		p3.m128 = _mm_set1_epi32(_parameters.primes[i+1]);
-		p2.m128 = _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(p1.m128), _mm_castsi128_ps(p3.m128), _MM_SHUFFLE(0, 0, 0, 0)));
-		offset1.m128 = _mm_load_si128((__m128i const*) &offsets[i*6 + 0]);
-		offset2.m128 = _mm_load_si128((__m128i const*) &offsets[i*6 + 4]);
-		offset3.m128 = _mm_load_si128((__m128i const*) &offsets[i*6 + 8]);
-		while (true) {
-			cmpres1.m128 = _mm_cmpgt_epi32(offsetmax.m128, offset1.m128);
-			cmpres2.m128 = _mm_cmpgt_epi32(offsetmax.m128, offset2.m128);
-			cmpres3.m128 = _mm_cmpgt_epi32(offsetmax.m128, offset3.m128);
-			const int mask1 = _mm_movemask_epi8(cmpres1.m128);
-			const int mask2 = _mm_movemask_epi8(cmpres2.m128);
-			const int mask3 = _mm_movemask_epi8(cmpres3.m128);
-			if ((mask1 == 0) && (mask2 == 0) && (mask3 == 0)) break;
-			_addRegToPending(sieve, pending, pending_pos, offset1, mask1);
-			_addRegToPending(sieve, pending, pending_pos, offset2, mask2);
-			_addRegToPending(sieve, pending, pending_pos, offset3, mask3);
-			nextIncr1.m128 = _mm_and_si128(cmpres1.m128, p1.m128);
-			nextIncr2.m128 = _mm_and_si128(cmpres2.m128, p2.m128);
-			nextIncr3.m128 = _mm_and_si128(cmpres3.m128, p3.m128);
-			offset1.m128 = _mm_add_epi32(offset1.m128, nextIncr1.m128);
-			offset2.m128 = _mm_add_epi32(offset2.m128, nextIncr2.m128);
-			offset3.m128 = _mm_add_epi32(offset3.m128, nextIncr3.m128);
-		}
-		offset1.m128 = _mm_sub_epi32(offset1.m128, offsetmax.m128);
-		offset2.m128 = _mm_sub_epi32(offset2.m128, offsetmax.m128);
-		offset3.m128 = _mm_sub_epi32(offset3.m128, offsetmax.m128);
-		_mm_store_si128((__m128i*)&offsets[i*6 + 0], offset1.m128);
-		_mm_store_si128((__m128i*)&offsets[i*6 + 4], offset2.m128);
-		_mm_store_si128((__m128i*)&offsets[i*6 + 8], offset3.m128);
-	}
-
-	_termPending(sieve, pending);
-}
-
 void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t offsetId) {
 	std::unique_lock<std::mutex> modLock(sieve.modLock, std::defer_lock);
 	for (uint64_t loop(0) ; loop < _parameters.maxIter ; loop++) {
@@ -580,12 +462,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 		}
 
 		// Main sieve
-		if (tupleSize == 6)
-			_processSieve6(sieve.sieve, sieve.offsets, start_i, _sparseLimit);
-		else if (tupleSize == 9)
-			_processSieve9(sieve.sieve, sieve.offsets, start_i, _sparseLimit);
-		else
-			_processSieve(sieve.sieve, sieve.offsets, start_i, _sparseLimit);
+		_processSieve(sieve.sieve, sieve.offsets, start_i, _sparseLimit);
 
 		// Must now have all segments populated.
 		if (loop == 0) modLock.lock();
@@ -615,7 +492,7 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 		gw.workDataIndex = workDataIndex;
 		int useGPU = 0;
 		if (_parameters.gpuWorkers > 0)
-			useGPU = std::max(std::min(8, 128 - (int)_gpuWorkQueue.size()), 0);
+			useGPU = std::max(std::min(8, 32 - (int)_gpuWorkQueue.size()), 0);
 		
 		bool stop(false);
 		uint64_t *sieve64((uint64_t*) sieve.sieve);
@@ -688,28 +565,6 @@ void Miner::_runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t off
 	}
 }
 
-bool Miner::_testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_tmp, uint32_t height) {
-	uint32_t M[WORK_INDEXES * MAX_N_SIZE], bits(0), N_Size;
-	uint32_t *mp(&M[0]);
-	for (uint32_t i(0); i < WORK_INDEXES; ++i) {
-		mpz_mul_ui(z_tmp, _primorial, indexes[i]);
-		mpz_add(z_tmp, z_tmp, z_ploop);
-
-		if (bits == 0) {
-			bits = mpz_sizeinbase(z_tmp, 2);
-			N_Size = (bits >> 5) + ((bits & 0x1f) > 0);
-			if (N_Size > MAX_N_SIZE) return false;
-		}
-		else assert(bits == mpz_sizeinbase(z_tmp, 2));
-
-		memcpy(mp, z_tmp->_mp_d, N_Size * 4);
-		mp += N_Size;
-	}
-
-	fermatTest(N_Size, WORK_INDEXES, M, is_prime, _cpuInfo.hasAVX512(), [&]() { return height != _currentHeight; });
-	return true;
-}
-
 void Miner::_verifyThread() {
 /* Check for a prime cluster. Uses the fermat test - jh's code noted that it is
 slightly faster. Could do an MR test as a follow-up, but the server can do this
@@ -751,26 +606,6 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 			mpz_add_ui(z_ploop, z_ploop, _primorialOffsetDiffToFirst[job.testWork.offsetId]);
 
 			bool firstTestDone(false);
-			if (_cpuInfo.hasAVX2() && _manager->options().enableAvx2() && job.testWork.n_indexes == WORK_INDEXES) {
-				uint32_t isPrime[WORK_INDEXES];
-				firstTestDone = _testPrimesIspc(job.testWork.indexes, isPrime, z_ploop, z_tmp, _workData[job.workDataIndex].verifyBlock.height);
-				if (_currentHeight == _workData[job.workDataIndex].verifyBlock.height && firstTestDone) {
-					job.testWork.n_indexes = 0;
-					for (uint32_t i(0) ; i < WORK_INDEXES ; i++) {
-						DBG_VERIFY(({
-							mpz_mul_ui(z_tmp, _primorial, job.testWork.indexes[i]);
-							mpz_add(z_tmp, z_tmp, z_ploop);
-							mpz_sub_ui(z_ft_n, z_tmp, 1);
-							mpz_powm(z_ft_r, z_ft_b, z_ft_n, z_tmp);
-							if (mpz_cmp_ui(z_ft_r, 1) == 0) assert(isPrime[i]);
-							else assert(!isPrime[i]);
-						}));
-						_manager->incTupleCount(0);
-						if (isPrime[i])
-							job.testWork.indexes[job.testWork.n_indexes++] = job.testWork.indexes[i];
-					}
-				}
-			}
 
 			for (uint32_t idx(0) ; idx < job.testWork.n_indexes ; idx++) {
 				if (_currentHeight != _workData[job.workDataIndex].verifyBlock.height) break;
@@ -853,6 +688,8 @@ struct GpuTestContext
 void workFn(void* cxt) {
 	((GpuTestContext*)cxt)->pMiner->finishGpuTests((GpuTestContext*)cxt);
 }
+
+#define MAX_N_SIZE 64
 
 bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp, GpuTestContext* testContext)
 {
@@ -966,7 +803,7 @@ too for the one-in-a-whatever case that Fermat is wrong. */
 	mpz_init(z_ploop);
 	mpz_init(z_temp);
 
-	struct PrimeTestCxt* gpuContext = primeTestInit(gpuDeviceId);
+	struct PrimeTestCxt* gpuContext = primeTestInit();
 
 	while (true) {
 		if (testContext.workDataIndex != 0xffff && _gpuWorkQueue.size() == 0) {

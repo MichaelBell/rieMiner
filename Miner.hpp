@@ -11,17 +11,11 @@
 class WorkManager;
 struct WorkData;
 
-union xmmreg_t {
-	uint32_t v[4];
-	uint64_t v64[2];
-	__m128i m128;
-};
-
 #define PENDING_SIZE 16
 
 #define WORK_DATAS 2
 #define WORK_INDEXES 64
-#define GPU_WORK_INDEXES 1024
+#define GPU_WORK_INDEXES 512
 enum JobType {TYPE_CHECK, TYPE_MOD, TYPE_SIEVE, TYPE_DUMMY};
 
 struct MinerParameters {
@@ -148,13 +142,6 @@ class Miner {
 		pos &= PENDING_SIZE - 1;
 	}
 
-	void _addRegToPending(uint8_t *sieve, uint32_t pending[PENDING_SIZE], uint64_t &pos, xmmreg_t reg, int mask) {
-		if (mask & 0x0008) _addToPending(sieve, pending, pos, reg.v[0]);
-		if (mask & 0x0080) _addToPending(sieve, pending, pos, reg.v[1]);
-		if (mask & 0x0800) _addToPending(sieve, pending, pos, reg.v[2]);
-		if (mask & 0x8000) _addToPending(sieve, pending, pos, reg.v[3]);
-	}
-
 	void _termPending(uint8_t *sieve, uint32_t pending[PENDING_SIZE]) {
 		for (uint64_t i(0) ; i < PENDING_SIZE ; i++) {
 			const uint32_t old(pending[i]);
@@ -168,10 +155,8 @@ class Miner {
 	void _putOffsetsInSegments(SieveInstance& sieve, uint64_t *offsets, uint64_t* counts, int n_offsets);
 	void _updateRemainders(uint32_t workDataIndex, uint64_t start_i, uint64_t end_i, uint32_t remainderIdx);
 	void _processSieve(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
-	void _processSieve6(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _processSieve9(uint8_t *sieve, uint32_t* offsets, uint64_t start_i, uint64_t end_i);
 	void _runSieve(SieveInstance& sieve, uint32_t workDataIndex, uint32_t offsetId);
-	bool _testPrimesIspc(uint32_t indexes[WORK_INDEXES], uint32_t is_prime[WORK_INDEXES], mpz_t z_ploop, mpz_t z_temp, uint32_t height);
 	void _verifyThread();
 	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[GPU_WORK_INDEXES], uint32_t isPrime[GPU_WORK_INDEXES], uint32_t listSize, mpz_t z_ploop, mpz_t z_temp, struct GpuTestContext* testContext);
 	void _gpuThread(uint32_t gpuDeviceId);

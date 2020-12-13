@@ -16,7 +16,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <cpuid.h>
 #include <gmpxx.h>
 
 #define leading0s(x) std::setw(x) << std::setfill('0')

@@ -1,17 +1,12 @@
 CXX    = g++
+NVCC   = nvcc
 M4     = m4
 AS     = as
 SED    = sed
 CFLAGS = -Wall -Wextra -std=gnu++11 -O3 -march=native -fno-pie -no-pie
+NVCFLAGS = -O3
 
-msys_version := $(if $(findstring Msys, $(shell uname -o)),$(word 1, $(subst ., ,$(shell uname -r))),0)
-ifneq ($(msys_version), 0)
-LIBS   = -pthread -ljansson -lcurl -lcrypto -lgmpxx -lgmp -lws2_32 -lOpenCL -Wl,--image-base -Wl,0x10000000
-MOD_1_4_ASM = mod_1_4_win.asm
-else
-LIBS   = -pthread -ljansson -lcurl -lcrypto -lOpenCL -Wl,-Bstatic -lgmpxx -lgmp -Wl,-Bdynamic
-MOD_1_4_ASM = mod_1_4.asm
-endif
+LIBS   = -pthread -ljansson -lcurl -lcrypto -lcuda -lcudart -Wl,-Bstatic -lgmpxx -lgmp -Wl,-Bdynamic -L/usr/local/cuda/lib64
 
 all: rieMiner
 
@@ -22,7 +17,7 @@ static: CFLAGS += -D CURL_STATICLIB -I incs/
 static: LIBS   := -static -L libs/ $(LIBS)
 static: rieMiner
 
-rieMiner: main.o Miner.o StratumClient.o GBTClient.o Client.o WorkManager.cpp Stats.cpp tools.o mod_1_4.o mod_1_2_avx.o mod_1_2_avx2.o fermat.o primetest.o primetest512.o clprimetest.o
+rieMiner: main.o Miner.o StratumClient.o GBTClient.o Client.o WorkManager.cpp Stats.cpp tools.o cudaprimetest.o
 	$(CXX) $(CFLAGS) -o rieMiner $^ $(LIBS)
 
 main.o: main.cpp main.hpp Miner.hpp StratumClient.hpp GBTClient.hpp Client.hpp WorkManager.hpp Stats.hpp tools.hpp tsQueue.hpp
@@ -101,6 +96,9 @@ endif
 
 clprimetest.o: opencl/primetest.c
 	$(CXX) $(CFLAGS) -c -o clprimetest.o opencl/primetest.c -Wno-unused-function -Wno-unused-parameter -Wno-strict-overflow
+
+cudaprimetest.o: cuda/primetest.cu
+	$(NVCC) $(NVCFLAGS) -c -o cudaprimetest.o cuda/primetest.cu
 
 clean:
 	rm -rf rieMiner *.o

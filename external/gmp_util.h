@@ -4,23 +4,21 @@
 #pragma once
 
 #define add_ssaaaa(sh, sl, ah, al, bh, bl) \
-  __asm__ ("addq %5,%q1\n\tadcq %3,%q0"                                 \
-           : "=r" (sh), "=&r" (sl)                                      \
-           : "0"  ((uint64_t)(ah)), "rme" ((uint64_t)(bh)),             \
-             "%1" ((uint64_t)(al)), "rme" ((uint64_t)(bl)))
+  __asm__ ("adds\t%1, %x4, %5\n\tadc\t%0, %x2, %x3"                     \
+		             : "=r" (sh), "=&r" (sl)                                      \
+			                : "rZ" ((uint64_t)(ah)), "rZ" ((uint64_t)(bh)),                \
+					             "%r" ((uint64_t)(al)), "rI" ((uint64_t)(bl)) __CLOBBER_CC)
 #define sub_ddmmss(sh, sl, ah, al, bh, bl) \
-  __asm__ ("subq %5,%q1\n\tsbbq %3,%q0"                                 \
-           : "=r" (sh), "=&r" (sl)                                      \
-           : "0" ((uint64_t)(ah)), "rme" ((uint64_t)(bh)),              \
-             "1" ((uint64_t)(al)), "rme" ((uint64_t)(bl)))
-#define umul_ppmm(w1, w0, u, v) \
-  __asm__ ("mulq %3"                                                    \
-           : "=a" (w0), "=d" (w1)                                       \
-           : "%0" ((uint64_t)(u)), "rm" ((uint64_t)(v)))
-#define udiv_qrnnd(q, r, n1, n0, dx) /* d renamed to dx avoiding "=d" */\
-  __asm__ ("divq %4"                 /* stringification in K&R C */     \
-           : "=a" (q), "=d" (r)                                         \
-           : "0" ((uint64_t)(n0)), "1" ((uint64_t)(n1)), "rm" ((uint64_t)(dx)))
+	  __asm__ ("subs\t%1, %x4, %5\n\tsbc\t%0, %x2, %x3"                     \
+			             : "=r,r" (sh), "=&r,&r" (sl)                                 \
+				                : "rZ,rZ" ((uint64_t)(ah)), "rZ,rZ" ((uint64_t)(bh)),          \
+						             "r,Z"   ((uint64_t)(al)), "rI,r"  ((uint64_t)(bl)) __CLOBBER_CC)
+#define umul_ppmm(ph, pl, m0, m1) \
+	  do {                                                                  \
+		      uint64_t __m0 = (m0), __m1 = (m1);                                   \
+		      __asm__ ("umulh\t%0, %1, %2" : "=r" (ph) : "r" (__m0), "r" (__m1)); \
+		      (pl) = __m0 * __m1;                                                 \
+		    } while (0)
 
 /* Dividing (NH, NL) by D, returning the remainder only. Unlike
    udiv_qrnnd_preinv, works also for the case NH == D, where the
