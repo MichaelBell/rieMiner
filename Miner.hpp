@@ -133,18 +133,18 @@ class Miner {
 	uint32_t _nRemainingCheckTasksThreshold, _currentWorkIndex;
 	std::chrono::microseconds _presieveTime, _sieveTime, _verifyTime;
 	
-	void _addToSieveCache(uint8_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache, uint64_t &pos, uint32_t ent) {
-		__builtin_prefetch(&(sieve[ent >> 3U]));
+	void _addToSieveCache(uint32_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache, uint64_t &pos, uint32_t ent) {
+		__builtin_prefetch(&(sieve[ent >> 5U]));
 		uint32_t old(sieveCache[pos]);
-		sieve[old >> 3U] |= (1 << (old & 7U));
+		sieve[old >> 5U] |= (1 << (old & 31U));
 		sieveCache[pos] = ent;
 		pos++;
 		pos &= sieveCacheSize - 1;
 	}
-	void _endSieveCache(uint8_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache) {
+	void _endSieveCache(uint32_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache) {
 		for (uint64_t i(0) ; i < sieveCacheSize ; i++) {
 			const uint32_t old(sieveCache[i]);
-			sieve[old >> 3U] |= (1 << (old & 7U));
+			sieve[old >> 5U] |= (1 << (old & 31U));
 		}
 	}
 	

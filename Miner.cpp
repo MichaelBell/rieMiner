@@ -477,7 +477,7 @@ void Miner::_doSieveTask(const Task& task) {
 	std::array<uint32_t, sieveCacheSize> sieveCache{0};
 	uint64_t sieveCachePos(0);
 	Task checkTask{Task::Type::Check, workIndex, {}};
-	uint8_t* factorsTable8 = (uint8_t*)sieve.factorsTable;
+	uint32_t* factorsTable32 = (uint32_t*)sieve.factorsTable;
 	GpuTask gpuCheckTask{Task::Type::Check, workIndex, {}};
 	int useGPU;
 	
@@ -492,13 +492,13 @@ void Miner::_doSieveTask(const Task& task) {
 		uint32_t* factorsToEliminate = &sieve.factorsToEliminate[i*tupleSize];
 		for (uint32_t f(0) ; f < tupleSize; f++) {
 			while (factorsToEliminate[f] < _parameters.sieveSize) { // Eliminate primorial factors of the form p*m + fp for every m*p in the current table.
-				_addToSieveCache(factorsTable8, sieveCache, sieveCachePos, factorsToEliminate[f]);
+				_addToSieveCache(factorsTable32, sieveCache, sieveCachePos, factorsToEliminate[f]);
 				factorsToEliminate[f] += p; // Increment the m
 			}
 			factorsToEliminate[f] -= _parameters.sieveSize; // Prepare for the next iteration
 		}
 	}
-	_endSieveCache(factorsTable8, sieveCache);
+	_endSieveCache(factorsTable32, sieveCache);
 	
 	if (_works[workIndex].job.height != _client->currentHeight())
 		goto sieveEnd;
@@ -510,8 +510,8 @@ void Miner::_doSieveTask(const Task& task) {
 	sieveCache = std::array<uint32_t, sieveCacheSize>{0};
 	sieveCachePos = 0;
 	for (uint64_t i(0), count(sieve.additionalFactorsToEliminateCounts[sieveIteration]); i < count ; i++)
-		_addToSieveCache(factorsTable8, sieveCache, sieveCachePos, sieve.additionalFactorsToEliminate[sieveIteration][i]);
-	_endSieveCache(factorsTable8, sieveCache);
+		_addToSieveCache(factorsTable32, sieveCache, sieveCachePos, sieve.additionalFactorsToEliminate[sieveIteration][i]);
+	_endSieveCache(factorsTable32, sieveCache);
 	
 	if (_works[workIndex].job.height != _client->currentHeight())
 		goto sieveEnd;

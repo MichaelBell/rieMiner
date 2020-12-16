@@ -451,9 +451,12 @@ static void setup_fermat(int N_Size, int num, const mp_limb_t* M, mp_limb_t* MI,
 			mp = mshifted;
 		}
 
-		for (size_t i = 0; i < mn + 4; ++i) rp[i] = 0;
-		rp[mn + 4] = 1 << minv.shift;
-		mpn_div_r_preinv_ns(rp, mn + 5, mp, mn, &minv);
+		for (size_t i = 0; i < mn + 9; ++i) rp[i] = 0;
+		mp_limb_t x = mp[mn - 1] >> 24;
+		x += minv.shift;
+		int i = x >> 5;
+		rp[mn + i] = 1 << (x & 0x1f);
+		mpn_div_r_preinv_ns(rp, mn + i + 1, mp, mn, &minv);
 
 		if (minv.shift > 0)
 		{
@@ -500,13 +503,13 @@ PrimeTestCxt* primeTestInit()
 	// Create memory buffers on the device for each vector 
 	cudaStatus = cudaMalloc((void**)&cxt->m_mem_obj, MAX_JOB_SIZE * MAX_N_SIZE * sizeof(uint));
 	cudaStatus = cudaMalloc((void**)&cxt->mi_mem_obj, max(MAX_JOB_SIZE_PRIME, MAX_JOB_SIZE_MOD) * sizeof(uint));
-	cudaStatus = cudaMalloc((void**)&cxt->r_mem_obj, max(MAX_JOB_SIZE_PRIME * MAX_N_SIZE + 5, MAX_JOB_SIZE_MOD * 6) * sizeof(uint));
+	cudaStatus = cudaMalloc((void**)&cxt->r_mem_obj, max(MAX_JOB_SIZE_PRIME * MAX_N_SIZE, MAX_JOB_SIZE_MOD * 6) * sizeof(uint));
 	cudaStatus = cudaMalloc((void**)&cxt->is_prime_mem_obj, max(MAX_JOB_SIZE_PRIME, MAX_JOB_SIZE_MOD * 2) * sizeof(uint));
 
 	cudaStatus = cudaEventCreateWithFlags(&cxt->cudaEvent, cudaEventBlockingSync);
 
 	// Create buffers on host
-	cudaMallocHost((void**)&cxt->R, sizeof(uint)*max(MAX_N_SIZE*MAX_JOB_SIZE + 5, MAX_JOB_SIZE_MOD * 6));
+	cudaMallocHost((void**)&cxt->R, sizeof(uint)*max(MAX_N_SIZE*MAX_JOB_SIZE + 9, MAX_JOB_SIZE_MOD * 6));
 	cudaMallocHost((void**)&cxt->MI, sizeof(uint)*max(MAX_JOB_SIZE_PRIME, MAX_JOB_SIZE_MOD));
 	cudaMallocHost((void**)&cxt->is_prime, sizeof(uint)*max(MAX_JOB_SIZE_PRIME, MAX_JOB_SIZE_MOD * 2));
 
@@ -527,7 +530,7 @@ void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const uint* M, uint*
 		abort();
 	}
 
-	if (N_Size < 8 || N_Size > MAX_N_SIZE)
+	if (N_Size < 9 || N_Size > MAX_N_SIZE)
 	{
 		printf("N Size out of bounds\n");
 		abort();
@@ -567,7 +570,6 @@ void primeTest(PrimeTestCxt* cxt, int N_Size, int listSize, const uint* M, uint*
 #define TEST(N) case N: fermat_test<N> << <numBlocks, blockSize >> >(cxt->m_mem_obj, cxt->mi_mem_obj, cxt->r_mem_obj, cxt->is_prime_mem_obj); break
 		switch (N_Size)
 		{
-			TEST(8);
 			TEST(9);
 			TEST(10);
 			TEST(11);
