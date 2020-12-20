@@ -83,7 +83,7 @@ struct TaskDoneInfo {
 	};
 };
 
-constexpr uint32_t maxCandidatesPerGpuCheckTask(512);
+constexpr uint32_t maxCandidatesPerGpuCheckTask(1024);
 struct GpuTask {
 	Task::Type type;
 	uint64_t workIndex;
@@ -140,18 +140,18 @@ class Miner {
 	uint32_t _nRemainingCheckTasksThreshold, _currentWorkIndex;
 	std::chrono::microseconds _presieveTime, _sieveTime, _verifyTime;
 	
-	void _addToSieveCache(uint8_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache, uint64_t &pos, uint32_t ent) {
-		__builtin_prefetch(&(sieve[ent >> 3U]));
+	void _addToSieveCache(uint64_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache, uint64_t &pos, uint32_t ent) {
+		__builtin_prefetch(&(sieve[ent >> 6U]));
 		uint32_t old(sieveCache[pos]);
-		sieve[old >> 3U] |= (1 << (old & 7U));
+		sieve[old >> 6U] |= (1 << (old & 63U));
 		sieveCache[pos] = ent;
 		pos++;
 		pos &= sieveCacheSize - 1;
 	}
-	void _endSieveCache(uint8_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache) {
+	void _endSieveCache(uint64_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache) {
 		for (uint64_t i(0) ; i < sieveCacheSize ; i++) {
 			const uint32_t old(sieveCache[i]);
-			sieve[old >> 3U] |= (1 << (old & 7U));
+			sieve[old >> 6U] |= (1 << (old & 63U));
 		}
 	}
 	
@@ -160,7 +160,7 @@ class Miner {
 	void _processSieve(uint64_t*, uint32_t*, const uint64_t, const uint64_t);
 	void _processSieve6(uint64_t*, uint32_t*, uint64_t, const uint64_t);
 	void _doSieveTask(const Task&);
-	void _doCheckTask(const Task&);
+	void _doCheckTask(Task&);
 	bool _testPrimesIspc(const std::array<uint32_t, maxCandidatesPerCheckTask>&, uint32_t[maxCandidatesPerCheckTask], const mpz_class&, mpz_class&);
 	void _doTasks(uint16_t);
 	void _manageTasks();

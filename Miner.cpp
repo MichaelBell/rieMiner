@@ -6,7 +6,7 @@
 #include "external/gmp_util.h"
 #include "ispc/fermat.h"
 #include "Miner.hpp"
-#include "cuda/primetest.h"
+#include "opencl/primetest.h"
 
 extern "C" {
 	void rie_mod_1s_4p_cps(uint64_t *cps, uint64_t p);
@@ -652,6 +652,8 @@ void Miner::_doSieveTask(const Task& task) {
 	std::array<uint32_t, sieveCacheSize> sieveCache{0};
 	uint64_t sieveCachePos(0);
 	Task checkTask{Task::Type::Check, workIndex, {}};
+	GpuTask gpuCheckTask{Task::Type::Check, workIndex, {}};
+	int useGPU;
 	
 	if (_works[workIndex].job.height != _client->currentHeight()) // Abort Sieve Task if new block (but count as Task done)
 		goto sieveEnd;
@@ -686,7 +688,7 @@ void Miner::_doSieveTask(const Task& task) {
 	gpuCheckTask.check.nCandidates = 0;
 	gpuCheckTask.check.offsetId = sieve.id;
 	gpuCheckTask.check.factorStart = sieveIteration*_parameters.sieveSize;
-	useGPU = std::max(std::min(8, 24 - (int)_gpuTasks.size()), 0);
+	useGPU = std::max(std::min(8, 128 - (int)_gpuTasks.size()), 0);
 
 	// Extract candidates from the sieve and create verify tasks of up to maxCandidatesPerCheckTask candidates.
 	for (uint32_t b(0) ; b < _parameters.sieveWords ; b++) {
@@ -776,7 +778,7 @@ bool Miner::_testPrimesIspc(const std::array<uint32_t, maxCandidatesPerCheckTask
 	return true;
 }
 
-void Miner::_doCheckTask(const Task& task) {
+void Miner::_doCheckTask(Task& task) {
 	const uint16_t workIndex(task.workIndex);
 	if (_works[workIndex].job.height != _client->currentHeight()) return;
 	std::vector<uint64_t> tupleCounts(_parameters.pattern.size() + 1, 0);
@@ -970,7 +972,7 @@ void Miner::_gpuWorker() {
         testContext.nCandidates = 0;
         testContext.workIndex = 0xffff;
 
-        struct PrimeTestCxt* gpuContext = primeTestInit();
+        struct PrimeTestCxt* gpuContext = primeTestInit(0);
 
         while (_running) {
                 if (testContext.workIndex != 0xffff && _gpuTasks.size() == 0) {
