@@ -125,8 +125,9 @@ class Miner {
 	CpuID _cpuInfo;
 	// Miner data (generated in init)
 	mpz_class _primorial;
-	uint64_t _nPrimes, _factorMax, _primesIndexThreshold;
-	std::vector<uint64_t> _primes, _modularInverses, _modPrecompute;
+	uint64_t _nPrimes, _nPrimes32, _factorMax, _primesIndexThreshold;
+	std::vector<uint32_t> _primes32, _modularInverses32;
+	std::vector<uint64_t> _primes64, _modularInverses64, _modPrecompute;
 	std::vector<mpz_class> _primorialOffsets;
 	std::vector<uint64_t> _halfPattern, _primorialOffsetDiff;
 	// Miner state variables
@@ -168,6 +169,15 @@ class Miner {
 
 	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[maxCandidatesPerCheckTask], uint32_t isPrime[maxCandidatesPerCheckTask], uint32_t listSize, struct GpuTestContext* testContext);
 	void _gpuWorker();
+
+	uint64_t _getPrime(uint64_t i) const { 
+		if (i < _nPrimes32) return _primes32[i];
+		else return _primes64[i - _nPrimes32];
+	}
+	uint64_t _getModularInverse(uint64_t i) const {
+		if (i < _nPrimes32) return _modularInverses32[i];
+		else return _modularInverses64[i];
+	}
 
 public:
 	Miner(const Options &options) :
