@@ -6,6 +6,7 @@
 #include "external/gmp_util.h"
 #include "ispc/fermat.h"
 #include "Miner.hpp"
+#include "cuda/primetest.h"
 
 extern "C" {
 	void rie_mod_1s_4p_cps(uint64_t *cps, uint64_t p);
@@ -332,6 +333,8 @@ void Miner::startThreads() {
 		_statManager.start(_parameters.pattern.size());
 		std::cout << "Starting the miner's master thread..." << std::endl;
 		_masterThread = std::thread(&Miner::_manageTasks, this);
+		std::cout << "Starting the miner's GPU thread..." << std::endl;
+		_gpuThread = std::thread(&Miner::_gpuWorker, this);
 		std::cout << "Starting " << _parameters.threads << " miner's worker threads..." << std::endl;
 		for (uint16_t i(0) ; i < _parameters.threads ; i++)
 			_workerThreads.push_back(std::thread(&Miner::_doTasks, this, i));
@@ -353,6 +356,9 @@ void Miner::stopThreads() {
 		std::cout << "Waiting for the miner's master thread to finish..." << std::endl;
 		_tasksDoneInfos.push_front(TaskDoneInfo{Task::Type::Dummy, {}}); // Unblock if master thread stuck in blocking_pop_front().
 		_masterThread.join();
+		std::cout << "Waiting for the miner's GPU thread to finish..." << std::endl;
+		_gpuTasks.push_front(GpuTask{Task::Type::Dummy, 0, {}});
+		_gpuThread.join();
 		std::cout << "Waiting for the miner's worker threads to finish..." << std::endl;
 		for (uint16_t i(0) ; i < _parameters.threads ; i++)
 			_tasks.push_front(Task{Task::Type::Dummy, 0, {}}); // Unblock worker threads stuck in blocking_pop_front().
@@ -639,7 +645,7 @@ void Miner::_processSieve6(uint64_t *factorsTable, uint32_t* factorsToEliminate,
 	}
 }
 
-void Miner::_doSieveTask(Task task) {
+void Miner::_doSieveTask(const Task& task) {
 	Sieve& sieve(_sieves[task.sieve.id]);
 	std::unique_lock<std::mutex> presieveLock(sieve.presieveLock, std::defer_lock);
 	const uint64_t workIndex(task.workIndex), sieveIteration(task.sieve.iteration), firstPrimeIndex(_parameters.primorialNumber);
@@ -672,28 +678,62 @@ void Miner::_doSieveTask(Task task) {
 	if (_works[workIndex].job.height != _client->currentHeight())
 		goto sieveEnd;
 	
+	checkTask.check.firstTestDone = false;
 	checkTask.check.nCandidates = 0;
 	checkTask.check.offsetId = sieve.id;
 	checkTask.check.factorStart = sieveIteration*_parameters.sieveSize;
+
+	gpuCheckTask.check.nCandidates = 0;
+	gpuCheckTask.check.offsetId = sieve.id;
+	gpuCheckTask.check.factorStart = sieveIteration*_parameters.sieveSize;
+	useGPU = std::max(std::min(8, 24 - (int)_gpuTasks.size()), 0);
+
 	// Extract candidates from the sieve and create verify tasks of up to maxCandidatesPerCheckTask candidates.
 	for (uint32_t b(0) ; b < _parameters.sieveWords ; b++) {
 		uint64_t sieveWord(~sieve.factorsTable[b]); // ~ is the Bitwise Not: ones then indicate the candidates and zeros the previously eliminated numbers.
 		while (sieveWord != 0) {
 			const uint32_t nEliminatedUntilNext(__builtin_ctzll(sieveWord)), candidateIndex((b*64) + nEliminatedUntilNext); // __builtin_ctzll returns the number of leading 0s.
-			checkTask.check.factorOffsets[checkTask.check.nCandidates] = candidateIndex;
-			checkTask.check.nCandidates++;
-			if (checkTask.check.nCandidates == maxCandidatesPerCheckTask) {
-				if (_works[workIndex].job.height != _client->currentHeight()) // Low overhead but still often enough
-					goto sieveEnd;
-				_tasks.push_back(checkTask);
-				checkTask.check.nCandidates = 0;
-				_works[workIndex].nRemainingCheckTasks++;
+
+			if (useGPU) {
+				gpuCheckTask.check.factorOffsets[gpuCheckTask.check.nCandidates] = candidateIndex;
+				gpuCheckTask.check.nCandidates++;
+				if (gpuCheckTask.check.nCandidates == maxCandidatesPerGpuCheckTask) {
+					if (_works[workIndex].job.height != _client->currentHeight()) // Low overhead but still often enough
+						goto sieveEnd;
+					_gpuTasks.push_back(gpuCheckTask);
+					gpuCheckTask.check.nCandidates = 0;
+					_works[workIndex].nRemainingCheckTasks++;
+					useGPU--;
+				}
+
+			}
+			else {
+				checkTask.check.factorOffsets[checkTask.check.nCandidates] = candidateIndex;
+				checkTask.check.nCandidates++;
+				if (checkTask.check.nCandidates == maxCandidatesPerCheckTask) {
+					if (_works[workIndex].job.height != _client->currentHeight()) // Low overhead but still often enough
+						goto sieveEnd;
+					_tasks.push_back(checkTask);
+					checkTask.check.nCandidates = 0;
+					_works[workIndex].nRemainingCheckTasks++;
+				}
 			}
 			sieveWord &= sieveWord - 1; // Change the candidate's bit from 1 to 0.
 		}
 	}
 	if (_works[workIndex].job.height != _client->currentHeight())
 		goto sieveEnd;
+	if (gpuCheckTask.check.nCandidates > 0) {
+		// GPU can only process full size blocks, split this into CPU jobs
+		for (uint32_t i(0); i < gpuCheckTask.check.nCandidates; ++i) {
+			checkTask.check.factorOffsets[checkTask.check.nCandidates++] = gpuCheckTask.check.factorOffsets[i];
+			if (checkTask.check.nCandidates == maxCandidatesPerCheckTask) {
+				_tasks.push_back(checkTask);
+				checkTask.check.nCandidates = 0;
+				_works[workIndex].nRemainingCheckTasks++;
+			}
+		}
+	}
 	if (checkTask.check.nCandidates > 0) {
 		_tasks.push_back(checkTask);
 		_works[workIndex].nRemainingCheckTasks++;
@@ -736,7 +776,7 @@ bool Miner::_testPrimesIspc(const std::array<uint32_t, maxCandidatesPerCheckTask
 	return true;
 }
 
-void Miner::_doCheckTask(Task task) {
+void Miner::_doCheckTask(const Task& task) {
 	const uint16_t workIndex(task.workIndex);
 	if (_works[workIndex].job.height != _client->currentHeight()) return;
 	std::vector<uint64_t> tupleCounts(_parameters.pattern.size() + 1, 0);
@@ -745,8 +785,8 @@ void Miner::_doCheckTask(Task task) {
 	candidateStart += _works[workIndex].primorialMultipleStart;
 	candidateStart += _primorialOffsets[task.check.offsetId];
 	
-	bool firstTestDone(false);
-	if (_parameters.useAvx2 && task.check.nCandidates == maxCandidatesPerCheckTask) { // Test candidates + 0 primality with assembly optimizations if possible.
+	bool firstTestDone(task.check.firstTestDone);
+	if (!firstTestDone && _parameters.useAvx2 && task.check.nCandidates == maxCandidatesPerCheckTask) { // Test candidates + 0 primality with assembly optimizations if possible.
 		uint32_t isPrime[maxCandidatesPerCheckTask];
 		firstTestDone = _testPrimesIspc(task.check.factorOffsets, isPrime, candidateStart, candidate);
 		if (firstTestDone) {
@@ -848,6 +888,136 @@ void Miner::_doTasks(const uint16_t id) { // Worker Threads run here until the m
 	for (int i(0) ; i < _parameters.sieveWorkers ; i++) {
 		delete factorsCacheCounts[i];
 		delete factorsCache[i];
+	}
+}
+
+struct GpuTestContext
+{
+	Miner* pMiner;
+	mpz_t z_temp, z_temp2;
+	mpz_class candidate, candidateStart;
+	uint32_t factorStart;
+	uint32_t factorOffsets[maxCandidatesPerGpuCheckTask];
+	uint32_t offsetId;
+	uint32_t nCandidates;
+	uint32_t workIndex;
+};
+
+void gpuWorkFn(void* cxt) {
+	((GpuTestContext*)cxt)->pMiner->finishGpuTests((GpuTestContext*)cxt);
+}
+
+#define MAX_N_SIZE_GPU 48
+
+bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[maxCandidatesPerCheckTask], uint32_t isPrime[maxCandidatesPerCheckTask], uint32_t listSize, GpuTestContext* testContext)
+{
+        uint32_t M[maxCandidatesPerGpuCheckTask * MAX_N_SIZE_GPU];
+        uint32_t bits = 0;
+        uint32_t N_Size = 0;
+        uint32_t* mp = &M[0];
+
+        // Get errors when not supplying full range.
+        if (listSize != maxCandidatesPerGpuCheckTask) return false;
+
+        for (uint32_t i(0); i < listSize; ++i) {
+		testContext->candidate = testContext->candidateStart + _primorial * indexes[i];
+
+                if (bits == 0) {
+                        bits = mpz_sizeinbase(testContext->candidate.get_mpz_t(), 2);
+                        N_Size = (bits >> 5) + ((bits & 0x1f) > 0);
+
+                        if (N_Size > MAX_N_SIZE_GPU) return false;
+                }
+                else {
+                        assert(bits == mpz_sizeinbase(testContext->candidate.get_mpz_t(), 2));
+                }
+
+                memcpy(mp, testContext->candidate.get_mpz_t()->_mp_d, N_Size * 4);
+                mp += N_Size;
+        }
+
+        primeTest(gpuContext, N_Size, listSize, M, isPrime, &gpuWorkFn, testContext);
+        return true;
+}
+
+void Miner::finishGpuTests(GpuTestContext* cxt) {
+	if (cxt->workIndex == 0xffff) return;
+
+	Task task;
+	task.type = Task::Type::Check;
+	task.workIndex = cxt->workIndex;
+	task.check.offsetId = cxt->offsetId;
+	task.check.factorStart = cxt->factorStart;
+	task.check.nCandidates = 0;
+	task.check.firstTestDone = true;
+
+	for (uint32_t i = 0; i < cxt->nCandidates; ++i) {
+		task.check.factorOffsets[task.check.nCandidates++] = cxt->factorOffsets[i];
+		if (task.check.nCandidates == maxCandidatesPerCheckTask) {
+			_doCheckTask(task);
+			task.check.nCandidates = 0;
+		}
+	}
+
+	if (task.check.nCandidates > 0) {
+		_doCheckTask(task);
+	}
+}
+
+void Miner::_gpuWorker() {
+        GpuTestContext testContext;
+        testContext.pMiner = this;
+        testContext.nCandidates = 0;
+        testContext.workIndex = 0xffff;
+
+        struct PrimeTestCxt* gpuContext = primeTestInit();
+
+        while (_running) {
+                if (testContext.workIndex != 0xffff && _gpuTasks.size() == 0) {
+                        DBG(std::cout << "GPU Q empty" << std::endl;);
+                        finishGpuTests(&testContext);
+                        testContext.nCandidates = 0;
+                        testContext.workIndex = 0xffff;
+                }
+
+                auto task(_gpuTasks.blocking_pop_front());
+		if (!_running) break;
+
+		const uint16_t workIndex(task.workIndex);
+		if (_works[workIndex].job.height != _client->currentHeight()) {
+			_tasksDoneInfos.push_back(TaskDoneInfo{Task::Type::Check, {task.workIndex}});
+			continue;
+		}
+		std::vector<uint64_t> tupleCounts(_parameters.pattern.size() + 1, 0);
+		mpz_mul_ui(testContext.candidateStart.get_mpz_t(), _primorial.get_mpz_t(), task.check.factorStart);
+		testContext.candidateStart += _works[workIndex].primorialMultipleStart;
+		testContext.candidateStart += _primorialOffsets[task.check.offsetId];
+
+		uint32_t isPrime[maxCandidatesPerGpuCheckTask];
+		bool testDone = _testPrimesGpu(gpuContext, task.check.factorOffsets.data(), isPrime, task.check.nCandidates, &testContext);
+                assert(testDone);
+
+                testContext.nCandidates = 0;
+                testContext.workIndex = task.workIndex;
+		testContext.factorStart = task.check.factorStart;
+		testContext.offsetId = task.check.offsetId;
+                for (uint32_t i(0); i < task.check.nCandidates; i++) {
+#if 0
+			testContext.candidate = testContext.candidateStart + _primorial * task.check.factorOffsets[i];
+
+                        if (isPrimeFermat(testContext.candidate)) assert(isPrime[i]);
+                        else assert(!isPrime[i]);
+#endif
+
+                        tupleCounts[0]++;
+                        if (isPrime[i]) {
+                        	testContext.factorOffsets[testContext.nCandidates++] = task.check.factorOffsets[i];
+				tupleCounts[1]++;
+                        }
+                }
+
+		_statManager.addCounts(tupleCounts);
+		_tasksDoneInfos.push_back(TaskDoneInfo{Task::Type::Check, {task.workIndex}});
 	}
 }
 
@@ -978,7 +1148,7 @@ void Miner::_manageTasks() {
 			else ERRORMSG("Expected Check Task done 2");
 		}
 		
-		DBG(std::cout << "Job Timing: " << _presieveTime.count() << "/" << _sieveTime.count() << "/" << _verifyTime.count() << ", tasks: " << _works[0].nRemainingCheckTasks << ", " << _works[1].nRemainingCheckTasks << std::endl;);
+		DBG(std::cout << "Job Timing: " << _presieveTime.count() << "/" << _sieveTime.count() << "/" << _verifyTime.count() << ", tasks: " << _works[0].nRemainingCheckTasks << ", " << _works[1].nRemainingCheckTasks << " (GPU Q: " << _gpuTasks.size() << ")" << std::endl;);
 	}
 }
 

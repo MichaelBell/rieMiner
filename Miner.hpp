@@ -49,6 +49,7 @@ struct Task {
 			uint64_t iteration;
 		} sieve;
 		struct {
+			bool firstTestDone;
 			uint32_t offsetId;
 			uint32_t nCandidates;
 			uint32_t factorStart; // The form of a candidate is firstCandidate + primorial*f, with f = factorStart + factorOffset
@@ -82,6 +83,18 @@ struct TaskDoneInfo {
 	};
 };
 
+constexpr uint32_t maxCandidatesPerGpuCheckTask(512);
+struct GpuTask {
+	Task::Type type;
+	uint64_t workIndex;
+	struct {
+		uint32_t offsetId;
+		uint32_t nCandidates;
+		uint32_t factorStart; // The form of a candidate is firstCandidate + primorial*f, with f = factorStart + factorOffset
+		std::array<uint32_t, maxCandidatesPerGpuCheckTask> factorOffsets;
+	} check;
+};
+
 struct MinerWork {
 	Job job; // Fetched from the Client, to be completed with the solution once it is found.
 	mpz_class primorialMultipleStart; // First multiple of the primorial after the target.
@@ -107,6 +120,7 @@ class Miner {
 	std::shared_ptr<Client> _client;
 	StatManager _statManager;
 	std::thread _masterThread;
+	std::thread _gpuThread;
 	std::vector<std::thread> _workerThreads;
 	CpuID _cpuInfo;
 	// Miner data (generated in init)
@@ -120,25 +134,24 @@ class Miner {
 	double _difficultyAtInit; // Restart the miner if the Difficulty changed a lot to retune
 	TsQueue<Task> _presieveTasks, _tasks;
 	TsQueue<TaskDoneInfo> _tasksDoneInfos;
+	TsQueue<GpuTask> _gpuTasks;
 	std::vector<Sieve> _sieves;
 	std::array<MinerWork, nWorks> _works; // Alternating work for better efficiency when there is a new block
 	uint32_t _nRemainingCheckTasksThreshold, _currentWorkIndex;
 	std::chrono::microseconds _presieveTime, _sieveTime, _verifyTime;
 	
-	void _addToSieveCache(uint64_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache, uint64_t &pos, uint32_t ent) {
-		__builtin_prefetch(&(sieve[ent >> 6U]));
+	void _addToSieveCache(uint8_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache, uint64_t &pos, uint32_t ent) {
+		__builtin_prefetch(&(sieve[ent >> 3U]));
 		uint32_t old(sieveCache[pos]);
-		if (old != 0)
-			sieve[old >> 6U] |= (1ULL << (old & 63U));
+		sieve[old >> 3U] |= (1 << (old & 7U));
 		sieveCache[pos] = ent;
 		pos++;
 		pos &= sieveCacheSize - 1;
 	}
-	void _endSieveCache(uint64_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache) {
+	void _endSieveCache(uint8_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache) {
 		for (uint64_t i(0) ; i < sieveCacheSize ; i++) {
 			const uint32_t old(sieveCache[i]);
-			if (old != 0)
-				sieve[old >> 6U] |= (1ULL << (old & 63U));
+			sieve[old >> 3U] |= (1 << (old & 7U));
 		}
 	}
 	
@@ -146,12 +159,16 @@ class Miner {
 	void _doPresieveTask(const Task&);
 	void _processSieve(uint64_t*, uint32_t*, const uint64_t, const uint64_t);
 	void _processSieve6(uint64_t*, uint32_t*, uint64_t, const uint64_t);
-	void _doSieveTask(Task);
+	void _doSieveTask(const Task&);
+	void _doCheckTask(const Task&);
 	bool _testPrimesIspc(const std::array<uint32_t, maxCandidatesPerCheckTask>&, uint32_t[maxCandidatesPerCheckTask], const mpz_class&, mpz_class&);
-	void _doCheckTask(Task);
 	void _doTasks(uint16_t);
 	void _manageTasks();
 	void _suggestLessMemoryIntensiveOptions(const uint64_t, const uint16_t)  const;
+
+	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[maxCandidatesPerCheckTask], uint32_t isPrime[maxCandidatesPerCheckTask], uint32_t listSize, struct GpuTestContext* testContext);
+	void _gpuWorker();
+
 public:
 	Miner(const Options &options) :
 		_mode(options.mode()), _parameters(MinerParameters()),
@@ -178,6 +195,8 @@ public:
 	bool inited() {return _inited;}
 	bool running() {return _running;}
 	bool shouldRestart() {return _shouldRestart;}
+
+	void finishGpuTests(struct GpuTestContext* cxt);
 	
 	void printStats() const;
 	bool benchmarkFinishedTimeOut(const double) const;
