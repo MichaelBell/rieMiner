@@ -1005,17 +1005,16 @@ void Miner::_gpuWorker() {
 
         while (_running) {
                 if (testContext.workIndex != 0xffff && _gpuTasks.size() == 0) {
-                        DBG(std::cout << "GPU Q empty" << std::endl;);
+                        //DBG(std::cout << "GPU Q empty" << std::endl;);
                         finishGpuTests(&testContext);
                         testContext.nCandidates = 0;
                         testContext.workIndex = 0xffff;
                 }
 
                 auto task(_gpuTasks.blocking_pop_front());
-		if (!_running) break;
 
 		const uint16_t workIndex(task.workIndex);
-		if (_works[workIndex].job.height != _client->currentHeight()) {
+		if (!_running || _works[workIndex].job.height != _client->currentHeight()) {
 			_tasksDoneInfos.push_back(TaskDoneInfo{Task::Type::Check, {task.workIndex}});
 			continue;
 		}
@@ -1027,11 +1026,16 @@ void Miner::_gpuWorker() {
 		uint32_t isPrime[maxCandidatesPerGpuCheckTask];
 		bool testDone = _testPrimesGpu(gpuContext, task.check.factorOffsets.data(), isPrime, task.check.nCandidates, &testContext);
                 assert(testDone);
+		if (!_running || _works[workIndex].job.height != _client->currentHeight()) {
+			_tasksDoneInfos.push_back(TaskDoneInfo{Task::Type::Check, {task.workIndex}});
+			continue;
+		}
 
                 testContext.nCandidates = 0;
                 testContext.workIndex = task.workIndex;
 		testContext.factorStart = task.check.factorStart;
 		testContext.offsetId = task.check.offsetId;
+		tupleCounts[0] = task.check.nCandidates;
                 for (uint32_t i(0); i < task.check.nCandidates; i++) {
 #if 0
 			testContext.candidate = testContext.candidateStart + _primorial * task.check.factorOffsets[i];
@@ -1040,7 +1044,6 @@ void Miner::_gpuWorker() {
                         else assert(!isPrime[i]);
 #endif
 
-                        tupleCounts[0]++;
                         if (isPrime[i]) {
                         	testContext.factorOffsets[testContext.nCandidates++] = task.check.factorOffsets[i];
 				tupleCounts[1]++;
