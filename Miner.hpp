@@ -144,7 +144,7 @@ class Miner {
 	void _addToSieveCache(uint64_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache, uint64_t &pos, uint32_t ent) {
 		__builtin_prefetch(&(sieve[ent >> 6U]));
 		uint32_t old(sieveCache[pos]);
-		sieve[old >> 6U] |= (1 << (old & 63U));
+		sieve[old >> 6U] |= (1ULL << (old & 63U));
 		sieveCache[pos] = ent;
 		pos++;
 		pos &= sieveCacheSize - 1;
@@ -152,7 +152,7 @@ class Miner {
 	void _endSieveCache(uint64_t *sieve, std::array<uint32_t, sieveCacheSize> &sieveCache) {
 		for (uint64_t i(0) ; i < sieveCacheSize ; i++) {
 			const uint32_t old(sieveCache[i]);
-			sieve[old >> 6U] |= (1 << (old & 63U));
+			sieve[old >> 6U] |= (1ULL << (old & 63U));
 		}
 	}
 	
@@ -167,7 +167,7 @@ class Miner {
 	void _manageTasks();
 	void _suggestLessMemoryIntensiveOptions(const uint64_t, const uint16_t)  const;
 
-	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[maxCandidatesPerCheckTask], uint32_t isPrime[maxCandidatesPerCheckTask], uint32_t listSize, struct GpuTestContext* testContext);
+	bool _testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t* indexes, uint32_t* isPrime, uint32_t listSize, struct GpuTestContext* testContext);
 	void _gpuWorker();
 
 	uint64_t _getPrime(uint64_t i) const { 

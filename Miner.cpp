@@ -938,9 +938,9 @@ void gpuWorkFn(void* cxt) {
 	((GpuTestContext*)cxt)->pMiner->finishGpuTests((GpuTestContext*)cxt);
 }
 
-#define MAX_N_SIZE_GPU 48
+#define MAX_N_SIZE_GPU 96
 
-bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t indexes[maxCandidatesPerCheckTask], uint32_t isPrime[maxCandidatesPerCheckTask], uint32_t listSize, GpuTestContext* testContext)
+bool Miner::_testPrimesGpu(struct PrimeTestCxt* gpuContext, uint32_t* indexes, uint32_t* isPrime, uint32_t listSize, GpuTestContext* testContext)
 {
         uint32_t M[maxCandidatesPerGpuCheckTask * MAX_N_SIZE_GPU];
         uint32_t bits = 0;
