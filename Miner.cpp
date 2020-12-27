@@ -8,6 +8,9 @@
 #include "Miner.hpp"
 
 extern "C" {
+#define mpn_powm __MPN(fermat2)
+__GMP_DECLSPEC mp_limb_t mpn_fermat2 (mp_srcptr, mp_size_t, mp_ptr);
+
 	void rie_mod_1s_4p_cps(uint64_t *cps, uint64_t p);
 	mp_limb_t rie_mod_1s_4p(mp_srcptr ap, mp_size_t n, uint64_t ps, uint64_t cnt, uint64_t* cps);
 	mp_limb_t rie_mod_1s_2p_4times(mp_srcptr ap, mp_size_t n, uint32_t* ps, uint32_t cnt, uint64_t* cps, uint64_t* remainders);
@@ -736,11 +739,11 @@ sieveEnd:
 
 // Riecoin uses the Miller-Rabin Test for the PoW, but the Fermat Test is significantly faster and more suitable for the miner.
 // n is probably prime if a^(n - 1) ≡ 1 (mod n) for one 0 < a < p or more.
-static const mpz_class mpz2(2); // Here, we test with one a = 2.
 bool isPrimeFermat(const mpz_class& n) {
-	mpz_class r, nm1(n - 1);
-	mpz_powm(r.get_mpz_t(), mpz2.get_mpz_t(), nm1.get_mpz_t(), n.get_mpz_t()); // r = 2^(n - 1) % n
-	return r == 1;
+	mp_limb_t *r;
+	mp_size_t nsize = n.get_mpz_t()->_mp_size;
+	r = (mp_limb_t*)alloca(sizeof(mp_limb_t)*nsize);
+	return mpn_fermat2(n.get_mpz_t()->_mp_d, nsize, r) == 1;
 }
 
 bool Miner::_testPrimesIspc(const std::array<uint32_t, maxCandidatesPerCheckTask> &factorOffsets, uint32_t is_prime[maxCandidatesPerCheckTask], const mpz_class &candidateStart, mpz_class &candidate) { // Assembly optimized prime testing by Michael Bell
