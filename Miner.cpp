@@ -5,6 +5,11 @@
 #include "Miner.hpp"
 #include "cuda/primetest.h"
 
+extern "C" {
+#define mpn_powm __MPN(fermat2)
+__GMP_DECLSPEC mp_limb_t mpn_fermat2 (mp_srcptr, mp_size_t, mp_ptr);
+}
+
 constexpr int factorsCacheSize(16384);
 constexpr uint16_t maxSieveWorkers(16); // There is a noticeable performance penalty using Vector so we are using Arrays.
 thread_local std::array<uint64_t*, maxSieveWorkers> factorsCache{nullptr};
@@ -589,11 +594,11 @@ sieveEnd:
 
 // Riecoin uses the Miller-Rabin Test for the PoW, but the Fermat Test is significantly faster and more suitable for the miner.
 // n is probably prime if a^(n - 1) ≡ 1 (mod n) for one 0 < a < p or more.
-static const mpz_class mpz2(2); // Here, we test with one a = 2.
 bool isPrimeFermat(const mpz_class& n) {
-	mpz_class r, nm1(n - 1);
-	mpz_powm(r.get_mpz_t(), mpz2.get_mpz_t(), nm1.get_mpz_t(), n.get_mpz_t()); // r = 2^(n - 1) % n
-	return r == 1;
+	mp_limb_t *r;
+	mp_size_t nsize = n.get_mpz_t()->_mp_size;
+	r = (mp_limb_t*)alloca(sizeof(mp_limb_t)*nsize);
+	return mpn_fermat2(n.get_mpz_t()->_mp_d, nsize, r) == 1;
 }
 
 void Miner::_doCheckTask(const Task& task) {

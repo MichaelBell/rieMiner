@@ -5,7 +5,7 @@ AS     = as
 SED    = sed
 CFLAGS = -Wall -Wextra -std=c++17 -O3 -s -march=native -fno-pie -no-pie
 
-LIBS   = -L/usr/local/cuda/lib64 -lcuda -lcudart -pthread -ljansson -lcurl -lcrypto -Wl,-Bstatic -lgmpxx -lgmp -Wl,-Bdynamic
+LIBS   = -L/usr/local/lib -L/usr/local/cuda/lib64 -lcuda -lcudart -pthread -ljansson -lcurl -lcrypto -Wl,-Bstatic -lgmpxx -lgmp -Wl,-Bdynamic
 
 all: rieMinerL
 
