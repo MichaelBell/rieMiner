@@ -1,6 +1,7 @@
 # Build artifacts
 *.o
 rieMiner
+rieMinerL
 rieMiner.exe
 
 # Per user configuration
