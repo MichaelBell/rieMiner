@@ -774,7 +774,7 @@ void Miner::_doCheckTask(Task task) {
 	candidateStart += _primorialOffsets[task.check.offsetId];
 	
 	bool firstTestDone(false);
-	if (_parameters.useAvx2 && task.check.nCandidates == maxCandidatesPerCheckTask) { // Test candidates + 0 primality with assembly optimizations if possible.
+	if (false && _parameters.useAvx2 && task.check.nCandidates == maxCandidatesPerCheckTask) { // Test candidates + 0 primality with assembly optimizations if possible.
 		uint32_t isPrime[maxCandidatesPerCheckTask];
 		firstTestDone = _testPrimesIspc(task.check.factorOffsets, isPrime, candidateStart, candidate);
 		if (firstTestDone) {
