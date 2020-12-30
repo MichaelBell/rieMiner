@@ -18,6 +18,7 @@ union xmmreg_t {
 };
 
 constexpr uint32_t sieveCacheSize(16);
+constexpr uint32_t presieveCacheSize(4);
 constexpr uint32_t nWorks(2);
 
 inline mpz_class u64ToMpz(const uint64_t u64) {
@@ -97,8 +98,7 @@ struct Sieve {
 	std::mutex presieveLock;
 	uint64_t *factorsTable = nullptr; // Booleans corresponding to whether a primorial factor is eliminated
 	uint32_t *factorsToEliminate = nullptr; // One entry for each constellation offset, for each prime number p < factorMax (the factors are in the form of indexes of the factorsTable)
-	uint32_t **additionalFactorsToEliminate = nullptr; // Factors for p >= factorMax (they are eliminated only once and treated separately), arranged by Sieve Iteration (also in the form of indexes of the factorsTable)
-	std::atomic<uint64_t> *additionalFactorsToEliminateCounts = nullptr; // Counts for each Sieve Iteration
+	uint64_t *additionalFactorsTable = nullptr; // Booleans corresponding a factor is eliminated by p >= factorMax (they are eliminated only once and treated separately), arranged by Sieve Iteration
 };
 
 class Miner {
@@ -142,8 +142,23 @@ class Miner {
 				sieve[old >> 6U] |= (1ULL << (old & 63U));
 		}
 	}
+	void _addToPresieveCache(uint64_t *sieve, std::array<uint64_t, presieveCacheSize> &sieveCache, uint64_t &pos, uint64_t ent) {
+		__builtin_prefetch(&(sieve[ent >> 6U]));
+		uint64_t old(sieveCache[pos]);
+		if (old != 0)
+			sieve[old >> 6U] |= (1ULL << (old & 63U));
+		sieveCache[pos] = ent;
+		pos++;
+		pos &= presieveCacheSize - 1;
+	}
+	void _endPresieveCache(uint64_t *sieve, std::array<uint64_t, presieveCacheSize> &sieveCache) {
+		for (uint64_t i(0) ; i < presieveCacheSize ; i++) {
+			const uint64_t old(sieveCache[i]);
+			if (old != 0)
+				sieve[old >> 6U] |= (1ULL << (old & 63U));
+		}
+	}
 	
-	void _addCachedAdditionalFactorsToEliminate(Sieve&, uint64_t*, uint64_t*, const int);
 	void _doPresieveTask(const Task&);
 	void _processSieve(uint64_t*, uint32_t*, const uint64_t, const uint64_t);
 	void _processSieve6(uint64_t*, uint32_t*, uint64_t, const uint64_t);

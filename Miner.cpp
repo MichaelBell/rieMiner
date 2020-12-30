@@ -17,8 +17,6 @@ extern "C" {
 constexpr uint64_t nPrimesTo2p32(203280221);
 constexpr int factorsCacheSize(16384);
 constexpr uint16_t maxSieveWorkers(16); // There is a noticeable performance penalty using Std Vector or Arrays so we are using Raw Arrays.
-thread_local uint64_t** factorsCache{nullptr};
-thread_local uint64_t** factorsCacheCounts{nullptr};
 thread_local uint16_t threadId(65535);
 
 void Miner::init(const MinerParameters &minerParameters) {
@@ -238,27 +236,20 @@ void Miner::init(const MinerParameters &minerParameters) {
 	for (int j(1) ; j < _parameters.sieveWorkers ; j++)
 		_primorialOffsetDiff[j - 1] = _parameters.primorialOffsets[j] - _parameters.primorialOffsets[j - 1] - constellationDiameter;
 	
-	uint64_t additionalFactorsCountEstimation(0); // tupleSize*factorMax*(sum of 1/p, for p in the prime table >= factorMax); it is the estimation of how many such p will eliminate a factor (factorMax/p being the probability of the modulo p being < factorMax)
-	double sumInversesOfPrimes(0.);
 	_primesIndexThreshold = 0; // Number of prime numbers smaller than factorMax in the table
 	for (uint64_t i(0) ; i < _nPrimes ; i++) {
 		const uint64_t p(_getPrime(i));
 		if (p >= _factorMax) {
-			if (_primesIndexThreshold == 0) {
-				_primesIndexThreshold = i;
-				if (_primesIndexThreshold % 2 == 1 && _parameters.pattern.size() == 6) // Needs to be even to use optimizations for 6-tuples
-					_primesIndexThreshold--;
-			}
-			sumInversesOfPrimes += 1./static_cast<double>(p);
+			_primesIndexThreshold = i;
+			if (_primesIndexThreshold % 2 == 1 && _parameters.pattern.size() == 6) // Needs to be even to use optimizations for 6-tuples
+				_primesIndexThreshold--;
+			break;
 		}
 	}
 	if (_primesIndexThreshold == 0)
 		_primesIndexThreshold = _nPrimes;
 	std::cout << "Prime index threshold: " << _primesIndexThreshold << std::endl;
 	const uint64_t factorsToEliminateEntries(_parameters.pattern.size()*_primesIndexThreshold); // PatternLength entries for every prime < factorMax
-	additionalFactorsCountEstimation = _parameters.pattern.size()*ceil(static_cast<double>(_factorMax)*sumInversesOfPrimes);
-	const uint64_t additionalFactorsEntriesPerIteration(17ULL*(additionalFactorsCountEstimation/_parameters.sieveIterations)/16ULL + 64ULL); // Have some margin
-	std::cout << "Estimated additional factors: " << additionalFactorsCountEstimation << " (allocated per iteration: " << additionalFactorsEntriesPerIteration << ")" << std::endl;
 	{
 		std::cout << "Precomputing modular inverses and division data..." << std::endl; // The precomputed data is used to speed up computations in _doPresieveTask.
 		t0 = std::chrono::steady_clock::now();
@@ -299,7 +290,6 @@ void Miner::init(const MinerParameters &minerParameters) {
 		_sieves.swap(sieves);
 		for (std::vector<Sieve>::size_type i(0) ; i < _sieves.size() ; i++) {
 			_sieves[i].id = i;
-			_sieves[i].additionalFactorsToEliminateCounts = new std::atomic<uint64_t>[_parameters.sieveIterations];
 		}
 		std::cout << "Allocating " << sizeof(uint64_t)*_parameters.sieveWorkers*_parameters.sieveWords << " bytes for the primorial factors tables..." << std::endl;
 		for (auto &sieve : _sieves)
@@ -325,11 +315,9 @@ void Miner::init(const MinerParameters &minerParameters) {
 	}
 	
 	try {
-		std::cout << "Allocating " << sizeof(uint32_t)*_parameters.sieveWorkers*_parameters.sieveIterations*additionalFactorsEntriesPerIteration << " bytes for the additional primorial factors..." << std::endl;
+		std::cout << "Allocating " << sizeof(uint64_t)*_parameters.sieveWorkers*_parameters.sieveIterations*_parameters.sieveWords << " bytes for the additional primorial factors..." << std::endl;
 		for (auto &sieve : _sieves) {
-			sieve.additionalFactorsToEliminate = new uint32_t*[_parameters.sieveIterations];
-			for (uint64_t j(0) ; j < _parameters.sieveIterations ; j++)
-				sieve.additionalFactorsToEliminate[j] = new uint32_t[additionalFactorsEntriesPerIteration];
+			sieve.additionalFactorsTable = new uint64_t[_parameters.sieveIterations*_parameters.sieveWords];
 		}
 	}
 	catch (std::bad_alloc& ba) {
@@ -401,10 +389,7 @@ void Miner::clear() {
 		for (auto &sieve : _sieves) {
 			delete sieve.factorsTable;
 			delete sieve.factorsToEliminate;
-			for (uint64_t j(0) ; j < _parameters.sieveIterations ; j++)
-				delete sieve.additionalFactorsToEliminate[j];
-			delete sieve.additionalFactorsToEliminate;
-			delete sieve.additionalFactorsToEliminateCounts;
+			delete sieve.additionalFactorsTable;
 		}
 		_sieves.clear();
 		_primes32.clear();
@@ -420,28 +405,18 @@ void Miner::clear() {
 	}
 }
 
-void Miner::_addCachedAdditionalFactorsToEliminate(Sieve& sieve, uint64_t *factorsCache, uint64_t *factorsCacheCounts, const int factorsCacheTotalCount) {
-	for (uint64_t i(0) ; i < _parameters.sieveIterations ; i++) // Initialize the counts for use as index and update the sieve's one
-		factorsCacheCounts[i] = sieve.additionalFactorsToEliminateCounts[i].fetch_add(factorsCacheCounts[i]);
-	for (int i(0) ; i < factorsCacheTotalCount ; i++) {
-		const uint64_t factor(factorsCache[i]),
-		               sieveIteration(factor >> _parameters.sieveBits),
-		               indexInFactorsTable(factorsCacheCounts[sieveIteration]);
-		sieve.additionalFactorsToEliminate[sieveIteration][indexInFactorsTable] = factor & (_parameters.sieveSize - 1); // factor % sieveSize
-		factorsCacheCounts[sieveIteration]++;
-	}
-	for (uint64_t i(0) ; i < _parameters.sieveIterations ; i++)
-		factorsCacheCounts[i] = 0;
-}
-
 void Miner::_doPresieveTask(const Task &task) {
 	const uint64_t workIndex(task.workIndex), firstPrimeIndex(task.presieve.start), lastPrimeIndex(task.presieve.end);
 	const mpz_class firstCandidate(_works[workIndex].primorialMultipleStart + _primorialOffsets[0]);
-	std::array<int, maxSieveWorkers> factorsCacheTotalCounts{0};
-	uint64_t** factorsCacheRef(factorsCache); // On Windows, caching these thread_local pointers on the stack makes a noticeable perf difference.
-	uint64_t** factorsCacheCountsRef(factorsCacheCounts);
+	// Better idea would be to empty the cache each loop as the prefetches can end up very uneven this way
+	std::array<uint64_t, presieveCacheSize> sieveCache[maxSieveWorkers];
+	std::array<uint64_t, maxSieveWorkers> sieveCachePos{0};
 	const uint64_t precompLimit(_modPrecompute.size()), tupleSize(_parameters.pattern.size());
 	
+	for (uint64_t i(0); i < _parameters.sieveWorkers; ++i) {
+		memset(&sieveCache[i][0], 0, sizeof(uint64_t) * sieveCacheSize);
+	}
+
 	uint64_t avxLimit(0);
 	const uint64_t avxWidth(_parameters.useAvx2 ? 8 : 4);
 	if (_cpuInfo.hasAVX()) {
@@ -522,22 +497,14 @@ void Miner::_doPresieveTask(const Task &task) {
 				}		                                                                                                       \
 			}			                                                                                                       \
 			else {			                                                                                                   \
-				if (factorsCacheTotalCounts[sieveWorkerIndex] + _halfPattern.size() >= factorsCacheSize) {		           \
-					if (_works[workIndex].job.height != _client->currentHeight())	                                           \
-						return;                                                                                                \
-					_addCachedAdditionalFactorsToEliminate(_sieves[sieveWorkerIndex], factorsCacheRef[sieveWorkerIndex], factorsCacheCountsRef[sieveWorkerIndex], factorsCacheTotalCounts[sieveWorkerIndex]); \
-					factorsCacheTotalCounts[sieveWorkerIndex] = 0;	                                                   \
-				}		                                                                                                       \
 				if (fp < _factorMax) {		                                                                                   \
-					factorsCacheRef[sieveWorkerIndex][factorsCacheTotalCounts[sieveWorkerIndex]++] = fp;	   \
-					factorsCacheCountsRef[sieveWorkerIndex][fp >> _parameters.sieveBits]++;	                       \
+					_addToPresieveCache(_sieves[sieveWorkerIndex].additionalFactorsTable, sieveCache[sieveWorkerIndex], sieveCachePos[sieveWorkerIndex], fp);  \
 				}		                                                                                                       \
 				for (std::vector<uint64_t>::size_type f(1) ; f < _halfPattern.size() ; f++) {		                           \
 					if (fp < mi[_halfPattern[f]]) fp += p;	                                                                   \
 					fp -= mi[_halfPattern[f]];	                                                                               \
 					if (fp < _factorMax) {	                                                                                   \
-						factorsCacheRef[sieveWorkerIndex][factorsCacheTotalCounts[sieveWorkerIndex]++] = fp; \
-						factorsCacheCountsRef[sieveWorkerIndex][fp >> _parameters.sieveBits]++;                    \
+						_addToPresieveCache(_sieves[sieveWorkerIndex].additionalFactorsTable, sieveCache[sieveWorkerIndex], sieveCachePos[sieveWorkerIndex], fp);  \
 					}	                                                                                                       \
 				}		                                                                                                       \
 			}		                                                                                                           \
@@ -577,10 +544,7 @@ void Miner::_doPresieveTask(const Task &task) {
 	
 	if (lastPrimeIndex > _primesIndexThreshold) {
 		for (int j(0) ; j < _parameters.sieveWorkers ; j++) {
-			if (factorsCacheTotalCounts[j] > 0) {
-				_addCachedAdditionalFactorsToEliminate(_sieves[j], factorsCacheRef[j], factorsCacheCountsRef[j], factorsCacheTotalCounts[j]);
-				factorsCacheTotalCounts[j] = 0;
-			}
+			_endPresieveCache(_sieves[j].additionalFactorsTable, sieveCache[j]);
 		}
 	}
 }
@@ -668,9 +632,8 @@ void Miner::_doSieveTask(Task task) {
 	Sieve& sieve(_sieves[task.sieve.id]);
 	std::unique_lock<std::mutex> presieveLock(sieve.presieveLock, std::defer_lock);
 	const uint64_t workIndex(task.workIndex), sieveIteration(task.sieve.iteration), firstPrimeIndex(_parameters.primorialNumber);
-	std::array<uint32_t, sieveCacheSize> sieveCache{0};
-	uint64_t sieveCachePos(0);
 	Task checkTask{Task::Type::Check, workIndex, {}};
+	uint64_t* additionalFactorsTable;
 	
 	if (_works[workIndex].job.height != _client->currentHeight()) // Abort Sieve Task if new block (but count as Task done)
 		goto sieveEnd;
@@ -689,20 +652,18 @@ void Miner::_doSieveTask(Task task) {
 	// Wait for the presieve tasks that generate the additional factors to finish.
 	if (sieveIteration == 0) presieveLock.lock();
 	
-	// Eliminate these factors.
-	for (uint64_t i(0), count(sieve.additionalFactorsToEliminateCounts[sieveIteration]); i < count ; i++)
-		_addToSieveCache(sieve.factorsTable, sieveCache, sieveCachePos, sieve.additionalFactorsToEliminate[sieveIteration][i]);
-	_endSieveCache(sieve.factorsTable, sieveCache);
-	
 	if (_works[workIndex].job.height != _client->currentHeight())
 		goto sieveEnd;
 	
 	checkTask.check.nCandidates = 0;
 	checkTask.check.offsetId = sieve.id;
 	checkTask.check.factorStart = sieveIteration*_parameters.sieveSize;
+	additionalFactorsTable = &sieve.additionalFactorsTable[sieveIteration * _parameters.sieveWords];
 	// Extract candidates from the sieve and create verify tasks of up to maxCandidatesPerCheckTask candidates.
 	for (uint32_t b(0) ; b < _parameters.sieveWords ; b++) {
-		uint64_t sieveWord(~sieve.factorsTable[b]); // ~ is the Bitwise Not: ones then indicate the candidates and zeros the previously eliminated numbers.
+		uint64_t sieveWord(sieve.factorsTable[b]); // ~ is the Bitwise Not: ones then indicate the candidates and zeros the previously eliminated numbers.
+		sieveWord |= additionalFactorsTable[b];
+		sieveWord = ~sieveWord;
 		while (sieveWord != 0) {
 			const uint32_t nEliminatedUntilNext(__builtin_ctzll(sieveWord)), candidateIndex((b*64) + nEliminatedUntilNext); // __builtin_ctzll returns the number of leading 0s.
 			checkTask.check.factorOffsets[checkTask.check.nCandidates] = candidateIndex;
@@ -839,14 +800,6 @@ void Miner::_doCheckTask(Task task) {
 void Miner::_doTasks(const uint16_t id) { // Worker Threads run here until the miner is stopped
 	// Thread initialization.
 	threadId = id;
-	factorsCache = new uint64_t*[_parameters.sieveWorkers];
-	factorsCacheCounts = new uint64_t*[_parameters.sieveWorkers];
-	for (int i(0) ; i < _parameters.sieveWorkers ; i++) {
-		factorsCache[i] = new uint64_t[factorsCacheSize];
-		factorsCacheCounts[i] = new uint64_t[_parameters.sieveIterations];
-		for (uint64_t j(0) ; j < _parameters.sieveIterations ; j++)
-			factorsCacheCounts[i][j] = 0;
-	}
 	// Threads are fetching tasks from the queues. The first part of the constellation search is sieving to generate candidates, which is done by the Presieve and Sieve tasks.
 	// Once the candidates were generated, they are tested whether they are indeed base primes of constellations using the Fermat Test.
 	while (_running) {
@@ -872,12 +825,6 @@ void Miner::_doTasks(const uint16_t id) { // Worker Threads run here until the m
 		}
 	}
 	// Thread clean up.
-	for (int i(0) ; i < _parameters.sieveWorkers ; i++) {
-		delete factorsCacheCounts[i];
-		delete factorsCache[i];
-	}
-	delete factorsCacheCounts;
-	delete factorsCache;
 }
 
 void Miner::_manageTasks() {
@@ -908,10 +855,9 @@ void Miner::_manageTasks() {
 			std::cout << " Block " << job.height << ", average " << FIXED(1) << _statManager.averageBlockTime() << " s, difficulty " << FIXED(3) << job.difficulty << std::endl;
 		}
 		_works[_currentWorkIndex].primorialMultipleStart = _works[_currentWorkIndex].job.target + _primorial - (_works[_currentWorkIndex].job.target % _primorial);
-		// Reset Counts and create Presieve Tasks
+		// Reset tables and create Presieve Tasks
 		for (auto &sieve : _sieves) {
-			for (uint64_t j(0) ; j < _parameters.sieveIterations ; j++)
-				sieve.additionalFactorsToEliminateCounts[j] = 0;
+			memset(sieve.additionalFactorsTable, 0, sizeof(uint64_t) * _parameters.sieveIterations * _parameters.sieveWords);
 		}
 		uint64_t nPresieveTasks(_parameters.threads*8ULL);
 		int32_t nRemainingNormalPresieveTasks(0), nRemainingAdditionalPresieveTasks(0);
