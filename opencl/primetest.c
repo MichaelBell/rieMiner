@@ -82,9 +82,12 @@ static void setup_fermat(int N_Size, int num, const mp_limb_t* M, mp_limb_t* MI,
 			mp = mshifted;
 		}
 
-		for (mp_size_t i = 0; i < mn+4; ++i) rp[i] = 0;
-		rp[mn+4] = 1 << minv.shift;
-		mpn_div_r_preinv_ns(rp, mn + 5, mp, mn, &minv);
+		for (mp_size_t i = 0; i < mn+9; ++i) rp[i] = 0;
+		mp_limb_t x = mp[mn - 1] >> 24;
+		x += minv.shift;
+		int i = x >> 5;
+		rp[mn + i] = 1 << (x & 0x1f);
+		mpn_div_r_preinv_ns(rp, mn + i + 1, mp, mn, &minv);
 
 		if (minv.shift > 0)
 		{
@@ -197,7 +200,7 @@ PrimeTestCxt* primeTestInit(uint32_t gpuDeviceId)
 		(const char **)&source_str, (const size_t *)&source_size, &ret);
 	DPRINTF("ret at %d is %d\n", __LINE__, ret);
 
-	cxt->R = (cl_uint*)malloc(sizeof(cl_uint)*(MAX_N_SIZE*MAX_JOB_SIZE + 5));
+	cxt->R = (cl_uint*)malloc(sizeof(cl_uint)*(MAX_N_SIZE*MAX_JOB_SIZE + 9));
 	cxt->MI = (cl_uint*)malloc(sizeof(cl_uint)*MAX_JOB_SIZE);
 	cxt->N_Size = 0;
 
