@@ -17,7 +17,7 @@ union xmmreg_t {
 	__m128i m128;
 };
 
-constexpr uint32_t sieveCacheSize(16);
+constexpr uint32_t sieveCacheSize(32);
 constexpr uint32_t nWorks(2);
 
 inline mpz_class u64ToMpz(const uint64_t u64) {
@@ -131,7 +131,7 @@ class Miner {
 	std::vector<mpz_class> _primorialOffsets;
 	std::vector<uint64_t> _halfPattern, _primorialOffsetDiff;
 	// Miner state variables
-	bool _inited, _running, _shouldRestart;
+	bool _inited, _running, _shouldRestart, _keepStats;
 	double _difficultyAtInit; // Restart the miner if the Difficulty changed a lot to retune
 	TsQueue<Task> _presieveTasks, _tasks;
 	TsQueue<TaskDoneInfo> _tasksDoneInfos;
@@ -160,6 +160,7 @@ class Miner {
 	void _doPresieveTask(const Task&);
 	void _processSieve(uint64_t*, uint32_t*, const uint64_t, const uint64_t);
 	void _processSieve6(uint64_t*, uint32_t*, uint64_t, const uint64_t);
+	void _processSieve7(uint64_t*, uint32_t*, uint64_t, const uint64_t);
 	void _doSieveTask(const Task&);
 	void _doCheckTask(Task&);
 	bool _testPrimesIspc(const std::array<uint32_t, maxCandidatesPerCheckTask>&, uint32_t[maxCandidatesPerCheckTask], const mpz_class&, mpz_class&);
@@ -183,7 +184,7 @@ public:
 	Miner(const Options &options) :
 		_mode(options.mode()), _parameters(MinerParameters()),
 		_client(nullptr),
-		_inited(false), _running(false), _shouldRestart(false) {
+		_inited(false), _running(false), _shouldRestart(false), _keepStats(false) {
 		_nPrimes = 0;
 		_primesIndexThreshold = 0;
 	}

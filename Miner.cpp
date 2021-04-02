@@ -1,4 +1,4 @@
-/* (c) 2017-2020 Pttn (https://github.com/Pttn/rieMiner)
+/* (c) 2017-2021 Pttn (https://github.com/Pttn/rieMiner)
 (c) 2018-2020 Michael Bell/Rockhawk (assembly optimizations, improvements of work management between threads, and some more) (https://github.com/MichaelBell/) */
 
 #include <gmpxx.h> // With Uint64_Ts, we still need to use the Mpz_ functions, otherwise there are "ambiguous overload" errors on Windows...
@@ -69,7 +69,6 @@ void Miner::init(const MinerParameters &minerParameters) {
 		else if (_parameters.pattern.size() == 4) proportion = 0.5 - _difficultyAtInit/1280.;
 		else proportion = 0.;
 		if (proportion < 0.) proportion = 0.;
-		if (job.powVersion == -1) proportion *= 2.5;
 		if (proportion > 1.) proportion = 1.;
 		_parameters.sieveWorkers = std::ceil(proportion*static_cast<double>(_parameters.threads));
 	}
@@ -192,16 +191,12 @@ void Miner::init(const MinerParameters &minerParameters) {
 	
 	uint32_t bitsForOffset;
 	// The primorial times the maximum factor should be smaller than the allowed limit for the target offset.
-	if (_mode == "Solo" || _mode == "Pool" || _mode == "Test") {
-		bitsForOffset = std::floor(_difficultyAtInit - 265.); // 1 . leading 8 bits . hash (256 bits) . remaining bits for the offset
-		bitsForOffset -= 48; // Some margin to take in account the Difficulty fluctuations
-	}
+	if (_mode == "Solo" || _mode == "Pool" || _mode == "Test")
+		bitsForOffset = std::floor(static_cast<double>(_difficultyAtInit)/_parameters.restartDifficultyFactor - 265.); // 1 . leading 8 bits . hash (256 bits) . remaining bits for the offset, and some margin to take in account the Difficulty fluctuations
 	else if (_mode == "Search")
 		bitsForOffset = std::floor(_difficultyAtInit - 97.); // 1 . leading 16 bits . random 80 bits . remaining bits for the offset
 	else
 		bitsForOffset = std::floor(_difficultyAtInit - 81.); // 1 . leading 16 bits . constructed 64 bits . remaining bits for the offset
-	if (job.powVersion == -1) // Maximum 256 bits allowed before the fork
-		bitsForOffset = std::min(bitsForOffset, 256U);
 	mpz_class primorialLimit(1);
 	primorialLimit <<= bitsForOffset;
 	primorialLimit /= u64ToMpz(_factorMax);
@@ -353,7 +348,9 @@ void Miner::startThreads() {
 		ERRORMSG("The miner is already running");
 	else {
 		_running = true;
-		_statManager.start(_parameters.pattern.size());
+		if (!_keepStats)
+			_statManager.start(_parameters.pattern.size());
+		_keepStats = false;
 		std::cout << "Starting the miner's master thread..." << std::endl;
 		_masterThread = std::thread(&Miner::_manageTasks, this);
 		std::cout << "Starting the miner's GPU thread..." << std::endl;
@@ -670,6 +667,45 @@ void Miner::_processSieve6(uint64_t *factorsTable, uint32_t* factorsToEliminate,
 	}
 }
 
+void Miner::_processSieve7(uint64_t *factorsTable, uint32_t* factorsToEliminate, uint64_t firstPrimeIndex, const uint64_t lastPrimeIndex) { // Assembly optimized sieving for 7-tuples by Michael Bell
+	assert(_parameters.pattern.size() == 7);
+	std::array<uint32_t, sieveCacheSize> sieveCache{0};
+	uint64_t sieveCachePos(0);
+	xmmreg_t offsetmax;
+	offsetmax.m128 = _mm_set1_epi32(_parameters.sieveSize);
+	for (uint64_t i(firstPrimeIndex) ; i < lastPrimeIndex ; i += 1) {
+		xmmreg_t p1;
+		xmmreg_t factor1, factor2, nextIncr1, nextIncr2;
+		xmmreg_t cmpres1, cmpres2;
+		p1.m128 = _mm_set1_epi32(_primes32[i]);
+		factor1.m128 = _mm_loadu_si128(reinterpret_cast<__m128i const*>(&factorsToEliminate[i*7 + 0]));
+		factor2.m128 = _mm_loadu_si128(reinterpret_cast<__m128i const*>(&factorsToEliminate[i*7 + 3]));
+		while (true) {
+			cmpres1.m128 = _mm_cmpgt_epi32(offsetmax.m128, factor1.m128);
+			cmpres2.m128 = _mm_cmpgt_epi32(offsetmax.m128, factor2.m128);
+			const int mask1(_mm_movemask_epi8(cmpres1.m128));
+			const int mask2(_mm_movemask_epi8(cmpres2.m128));
+			if ((mask1 == 0) && (mask2 == 0)) break;
+			if (mask1 & 0x0008) _addToSieveCache(factorsTable, sieveCache, sieveCachePos, factor1.v[0]);
+			if (mask1 & 0x0080) _addToSieveCache(factorsTable, sieveCache, sieveCachePos, factor1.v[1]);
+			if (mask1 & 0x0800) _addToSieveCache(factorsTable, sieveCache, sieveCachePos, factor1.v[2]);
+			if (mask1 & 0x8000) _addToSieveCache(factorsTable, sieveCache, sieveCachePos, factor1.v[3]);
+			if (mask2 & 0x0080) _addToSieveCache(factorsTable, sieveCache, sieveCachePos, factor2.v[1]);
+			if (mask2 & 0x0800) _addToSieveCache(factorsTable, sieveCache, sieveCachePos, factor2.v[2]);
+			if (mask2 & 0x8000) _addToSieveCache(factorsTable, sieveCache, sieveCachePos, factor2.v[3]);
+			nextIncr1.m128 = _mm_and_si128(cmpres1.m128, p1.m128);
+			nextIncr2.m128 = _mm_and_si128(cmpres2.m128, p1.m128);
+			factor1.m128 = _mm_add_epi32(factor1.m128, nextIncr1.m128);
+			factor2.m128 = _mm_add_epi32(factor2.m128, nextIncr2.m128);
+		}
+		factor1.m128 = _mm_sub_epi32(factor1.m128, offsetmax.m128);
+		factor2.m128 = _mm_sub_epi32(factor2.m128, offsetmax.m128);
+		_mm_storeu_si128(reinterpret_cast<__m128i*>(&factorsToEliminate[i*7 + 0]), factor1.m128);
+		_mm_storeu_si128(reinterpret_cast<__m128i*>(&factorsToEliminate[i*7 + 3]), factor2.m128);
+	}
+	_endSieveCache(factorsTable, sieveCache);
+}
+
 void Miner::_doSieveTask(const Task& task) {
 	Sieve& sieve(_sieves[task.sieve.id]);
 	std::unique_lock<std::mutex> presieveLock(sieve.presieveLock, std::defer_lock);
@@ -688,6 +724,8 @@ void Miner::_doSieveTask(const Task& task) {
 	// Eliminate the p*i + fp factors (p < factorMax).
 	if (_parameters.pattern.size() == 6)
 		_processSieve6(sieve.factorsTable, sieve.factorsToEliminate, firstPrimeIndex, _primesIndexThreshold);
+	else if (_parameters.pattern.size() == 7)
+		_processSieve7(sieve.factorsTable, sieve.factorsToEliminate, firstPrimeIndex, _primesIndexThreshold);
 	else
 		_processSieve(sieve.factorsTable, sieve.factorsToEliminate, firstPrimeIndex, _primesIndexThreshold);
 	
@@ -1060,12 +1098,16 @@ void Miner::_manageTasks() {
 	_currentWorkIndex = 0;
 	uint32_t oldHeight(0);
 	while (_running && _client->getJob(job)) {
-		if (job.difficulty < _difficultyAtInit - 48. || job.difficulty > _difficultyAtInit + 96.) // Restart to retune parameters.
+		if (job.difficulty < _difficultyAtInit/_parameters.restartDifficultyFactor || job.difficulty > _difficultyAtInit*_parameters.restartDifficultyFactor) { // Restart to retune parameters.
+			_keepStats = true;
 			_shouldRestart = true;
+		}
 		if (std::dynamic_pointer_cast<NetworkedClient>(_client) != nullptr) {
 			const NetworkInfo networkInfo(std::dynamic_pointer_cast<NetworkedClient>(_client)->info());
-			if (!hasAcceptedPatterns(networkInfo.acceptedPatterns)) // Restart if the pattern changed and is no longer compatible with the current one (notably, for the 0.20 fork)
+			if (!hasAcceptedPatterns(networkInfo.acceptedPatterns)) { // Restart if the pattern changed and is no longer compatible with the current one (notably, for the 0.20 fork)
+				_keepStats = false;
 				_shouldRestart = true;
+			}
 		}
 		_presieveTime = _presieveTime.zero();
 		_sieveTime = _sieveTime.zero();

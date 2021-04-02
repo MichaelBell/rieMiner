@@ -32,8 +32,9 @@ void GetBlockTemplateData::coinBaseGen(const std::vector<uint8_t> &scriptPubKey,
 	const std::vector<uint8_t> dwc(hexStrToV8(default_witness_commitment)); // for SegWit
 	for (uint32_t i(0) ; i < cbMsg.size() ; i++) scriptSig.push_back(cbMsg[i]);
 	
-	// Randomization to avoid 2 threads working on the same problem
-	for (uint32_t i(0) ; i < 4 ; i++) scriptSig.push_back(rand(0x00, 0xFF));
+	// Make jobs unique in case getJob is called multiple times in the same second
+	static uint8_t extraNonce(0);
+	scriptSig.push_back(extraNonce++);
 	
 	// Version (01000000)
 	coinbase.push_back(0x01); coinbase.push_back(0x00); coinbase.push_back(0x00); coinbase.push_back(0x00);
@@ -78,7 +79,7 @@ void GetBlockTemplateData::coinBaseGen(const std::vector<uint8_t> &scriptPubKey,
 	// Input Sequence (FFFFFFFF)
 	for (uint32_t i(0) ; i < 4 ; i++) coinbase.push_back(0xFF);
 	
-	const std::vector<uint8_t> scriptPubKeyDon(hexStrToV8("00140ad73a70fc2d7cf174f5b2ea47fc42a8bff16ea1"));
+	const std::vector<uint8_t> scriptPubKeyDon(hexStrToV8("00141c486c58cbffbfdc317c15c6d1ac7f133e46f679"));
 	uint64_t donation(donationPercent*coinbasevalue/100);
 	if (scriptPubKey == scriptPubKeyDon) donation = 0;
 	uint64_t reward(coinbasevalue - donation);
@@ -200,8 +201,8 @@ bool GBTClient::_fetchWork() {
 	_gbtd.height = json_integer_value(json_object_get(jsonGbt_Res, "height"));
 	
 	_info.powVersion = json_integer_value(json_object_get(jsonGbt_Res, "powversion"));
-	if (_info.powVersion != -1 && _info.powVersion != 1) {
-		std::cout << __func__ << ": invalid PoW Version " << _info.powVersion << "!" << std::endl;
+	if (_info.powVersion != 1) {
+		ERRORMSG("Unexpected PoW Version " << _info.powVersion << "! Please upgrade rieMiner!");
 		json_decref(jsonGbt);
 		return false;
 	}

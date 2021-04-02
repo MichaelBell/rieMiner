@@ -208,19 +208,20 @@ void Options::parseOptions() {
 				try {_minerParameters.sieveIterations = std::stoi(value);}
 				catch (...) {_minerParameters.sieveIterations = 0;}
 			}
+			else if (key == "RestartDifficultyFactor") {
+				try {_minerParameters.restartDifficultyFactor = std::stod(value);}
+				catch (...) {_minerParameters.restartDifficultyFactor = 1.05;}
+				if (_minerParameters.restartDifficultyFactor < 1.)
+					_minerParameters.restartDifficultyFactor = 1.;
+			}
 			else if (key == "TupleLengthMin") {
 				try {_minerParameters.tupleLengthMin = std::stoi(value);}
 				catch (...) {_minerParameters.tupleLengthMin = 0;}
 			}
 			else if (key == "Donate") {
-				if (value == "What a greedy dev!")
-					_donate = 0;
-				else {
-					try {_donate = std::stoi(value);}
-					catch (...) {_donate = 2;}
-					if (_donate == 0) _donate = 1;
-					if (_donate > 99) _donate = 99;
-				}
+				try {_donate = std::stoi(value);}
+				catch (...) {_donate = 2;}
+				if (_donate > 99) _donate = 99;
 			}
 			else if (key == "RefreshInterval") {
 				try {_refreshInterval = std::stod(value);}
@@ -319,7 +320,7 @@ void Options::parseOptions() {
 			}
 			else
 				std::cout << "  ScriptPubKey: " << v8ToHexStr(scriptPubKey) << std::endl;
-			if (_donate > 0) std::cout << "Donating " << _donate << "%" << std::endl;
+			if (_donate > 0) std::cout << "Donating " << _donate << "% to the Riecoin Project" << std::endl;
 			else std::cout << "You Meanie!" << std::endl;
 			std::cout << "Consensus rules: " << formatContainer(_rules) << std::endl;
 			if (std::find(_rules.begin(), _rules.end(), "segwit") == _rules.end()) {
@@ -327,6 +328,7 @@ void Options::parseOptions() {
 				exit(0);
 			}
 		}
+		std::cout << "Auto retune when the Difficulty varies by a factor " << _minerParameters.restartDifficultyFactor << std::endl;
 	}
 	if (_refreshInterval > 0.) std::cout << "Stats refresh interval: " << _refreshInterval << " s" << std::endl;
 }

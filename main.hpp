@@ -69,13 +69,15 @@ struct MinerParameters {
 	bool useAvx2;
 	uint64_t sieveBits, sieveSize, sieveWords, sieveIterations;
 	std::vector<uint64_t> pattern, primorialOffsets;
+	double restartDifficultyFactor;
 	
 	MinerParameters() :
 		threads(0), sieveWorkers(0), tupleLengthMin(0),
 		primorialNumber(0), primeTableLimit(0),
 		useAvx2(false),
 		sieveBits(0), sieveSize(0), sieveWords(0), sieveIterations(0),
-		pattern{}, primorialOffsets{} {}
+		pattern{}, primorialOffsets{},
+		restartDifficultyFactor(1.05) {}
 };
 
 class Options {
@@ -97,7 +99,7 @@ class Options {
 		_username(""),
 		_password(""),
 		_mode("Benchmark"),
-		_payoutAddress("ric1qpttn5u8u9470za84kt4y0lzz4zllzm4pyzhuge"),
+		_payoutAddress("ric1qr3yxckxtl7lacvtuzhrdrtrlzvlydane2h37ja"),
 		_secret("/rM0.92/"),
 		_tuplesFile("Tuples.txt"),
 		_filePrimeTableLimit(0),
